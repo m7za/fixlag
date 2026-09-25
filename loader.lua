@@ -1,5 +1,3 @@
--- | this file protected by Catph ( thank you Catph for your obfuscator ) | --
-
 -- | made by m7za | --
 
 -- | This File Protected By Catph V2.2.5 [ discord.gg/uHU98Z3E8z ] | --
