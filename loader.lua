@@ -181,7 +181,7 @@ Workspace.DescendantAdded:Connect(function(v)
     end)
 end)
 
--- | Character Effects Cleanup | --
+-- | Character effects Cleanup | --
 local function applyCharacterEffects(char)
     if not char then return end
     local function hideEffect(v)
