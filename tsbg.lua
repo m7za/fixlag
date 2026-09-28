@@ -14,19 +14,7 @@ local local_player = players.LocalPlayer
 local terrain = workspace.Terrain
 local player_gui = local_player:WaitForChild("PlayerGui")
 
--- | helper: safe destroy | --
-local function safe_destroy(obj)
-    task.defer(function()
-        task.wait(0.05)
-        if obj and obj.Parent then
-            pcall(function()
-                obj:Destroy()
-            end)
-        end
-    end)
-end
-
--- | helper: real character protection | --
+-- | helper: character protection | --
 local function is_real_character(model)
     if not model or not model:IsA("Model") then return false end
     if model == local_player.Character then return true end
@@ -51,6 +39,39 @@ local function is_character_part(item)
     end
 
     return false
+end
+
+-- | helper: primary part protection | --
+local function is_essential_part(obj)
+    if not obj then return true end
+    if is_character_part(obj) then return true end
+
+    if obj:IsA("Model") and obj.PrimaryPart then
+        return true
+    end
+
+    if obj:IsA("BasePart") then
+        local parent = obj.Parent
+        if parent and parent:IsA("Model") and parent.PrimaryPart == obj then
+            return true
+        end
+    end
+
+    return false
+end
+
+-- | helper: safe destroy | --
+local function safe_destroy(obj)
+    if not obj or not obj.Parent or is_essential_part(obj) then return end
+
+    task.defer(function()
+        task.wait(0.05)
+        if obj and obj.Parent and not is_essential_part(obj) then
+            pcall(function()
+                obj:Destroy()
+            end)
+        end
+    end)
 end
 
 -- | helper: clone detection | --
@@ -458,7 +479,7 @@ local function remove_camera_shake()
     setreadonly(meta, true)
 end
 
--- | hybrid debris & thrown cleaner | --
+-- | debris & thrown cleaner | --
 local function start_debris_cleaner()
     local critical_hitboxes = {
         ["projectile"] = true,
