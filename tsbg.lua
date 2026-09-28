@@ -14,6 +14,18 @@ local local_player = players.LocalPlayer
 local terrain = workspace.Terrain
 local player_gui = local_player:WaitForChild("PlayerGui")
 
+-- | helper: safe destroy without console warnings | --
+local function safe_destroy(obj)
+    task.defer(function()
+        task.wait()
+        if obj and obj.Parent then
+            pcall(function()
+                obj:Destroy()
+            end)
+        end
+    end)
+end
+
 -- | skybox & lighting | --
 local function setup_lighting()
     local sky_textures = {
@@ -97,7 +109,7 @@ local function remove_trees()
     local function check_and_destroy(item)
         local name = item.Name:lower()
         if name:find("tree") or name == "3d" then
-            item:Destroy()
+            safe_destroy(item)
         end
     end
 
@@ -110,7 +122,8 @@ end
 -- | character effects, smoke & garou removal | --
 local function setup_character_and_effects()
     local blue_color = Color3.fromRGB(0, 85, 190)
-    local full_invisible = NumberSequence.new(1)
+    local zero_size = NumberSequence.new(0)
+    local invisible = NumberSequence.new(1)
 
     local function is_smoke(name)
         return name:find("smoke") or name:find("dust") or name:find("dirt") 
@@ -118,50 +131,33 @@ local function setup_character_and_effects()
             or name:find("dash") or name:find("step") or name:find("land")
             or name:find("foot") or name:find("slide") or name:find("crater")
             or name:find("floor") or name:find("run") or name:find("walk")
+            or name:find("impact") or name:find("crack")
     end
 
     local function is_garou_effect(name)
         return name:find("water") or name:find("flow") or name:find("stream") 
             or name:find("whirlwind") or name:find("hunter") or name:find("slash")
             or name:find("fang") or name:find("nado") or name:find("lethal")
-            or name:find("rocksmash") or name:find("aura") or name:find("beam")
-            or name:find("pillar") or name:find("rampage") or name:find("garou")
-            or name:find("greenaura") or name:find("line") or name:find("shot")
+            or name:find("rocksmash") or name:find("aura") or name:find("real") 
+            or name:find("beam") or name:find("pillar") or name:find("rampage") 
+            or name:find("garou") or name:find("airtrail") or name:find("line") 
+            or name:find("shot") or name:find("palm") or name:find("constantemit")
     end
 
-    local function mute_particle(item)
+    local function kill_particle(item)
         pcall(function()
             item.Enabled = false
             item.Rate = 0
-            item.Transparency = full_invisible
+            item.Size = zero_size
+            item.Transparency = invisible
+            item.Texture = ""
             item:Clear()
         end)
-    end
-
-    local function mute_trail(item)
-        pcall(function()
-            item.Enabled = false
-            item.Transparency = full_invisible
-        end)
-    end
-
-    local function mute_beam(item)
-        pcall(function()
-            item.Enabled = false
-            item.Transparency = full_invisible
-        end)
-    end
-
-    local function mute_highlight(item)
-        pcall(function()
-            item.Enabled = false
-            item.FillTransparency = 1
-            item.OutlineTransparency = 1
-        end)
+        safe_destroy(item)
     end
 
     local function handle_descendant(item)
-        if not item then return end
+        if not item or not item.Parent then return end
 
         local name = item.Name:lower()
         local parent = item.Parent
@@ -169,12 +165,12 @@ local function setup_character_and_effects()
 
         if item:IsA("ParticleEmitter") then
             if is_smoke(name) or is_smoke(parent_name) then
-                mute_particle(item)
+                kill_particle(item)
                 return
             end
 
             if not is_blue and (is_garou_effect(name) or is_garou_effect(parent_name)) then
-                mute_particle(item)
+                kill_particle(item)
                 return
             end
 
@@ -187,12 +183,18 @@ local function setup_character_and_effects()
 
         if item:IsA("Smoke") or item:IsA("Fire") then
             pcall(function() item.Enabled = false end)
+            safe_destroy(item)
             return
         end
 
         if item:IsA("Trail") then
             if not is_blue or is_garou_effect(name) or is_garou_effect(parent_name) then
-                mute_trail(item)
+                pcall(function()
+                    item.Enabled = false
+                    item.Transparency = invisible
+                    item.Texture = ""
+                end)
+                safe_destroy(item)
             else
                 item.Color = ColorSequence.new(blue_color)
                 item.Texture = ""
@@ -203,14 +205,24 @@ local function setup_character_and_effects()
 
         if item:IsA("Beam") then
             if not is_blue or is_garou_effect(name) or is_garou_effect(parent_name) then
-                mute_beam(item)
+                pcall(function()
+                    item.Enabled = false
+                    item.Transparency = invisible
+                    item.Texture = ""
+                end)
+                safe_destroy(item)
             end
             return
         end
 
         if item:IsA("Highlight") then
             if not is_blue or is_garou_effect(name) or is_garou_effect(parent_name) then
-                mute_highlight(item)
+                pcall(function()
+                    item.Enabled = false
+                    item.FillTransparency = 1
+                    item.OutlineTransparency = 1
+                end)
+                safe_destroy(item)
             end
             return
         end
@@ -223,20 +235,20 @@ local function setup_character_and_effects()
                 item.Transparency = 1
                 item.CanCollide = false
                 item.CastShadow = false
+                safe_destroy(item)
                 return
             end
         elseif item:IsA("Model") then
             if item:FindFirstChildOfClass("Humanoid") then return end
 
-            if is_smoke(name) then
+            if is_smoke(name) or (not is_blue and is_garou_effect(name)) then
                 for _, part in ipairs(item:GetDescendants()) do
                     if part:IsA("BasePart") then
                         part.Transparency = 1
                         part.CanCollide = false
-                    elseif part:IsA("ParticleEmitter") then
-                        mute_particle(part)
                     end
                 end
+                safe_destroy(item)
                 return
             end
 
@@ -253,12 +265,11 @@ local function setup_character_and_effects()
                         part.Transparency = 1
                         part.CanCollide = false
                     elseif part:IsA("ParticleEmitter") then
-                        mute_particle(part)
-                    elseif part:IsA("Trail") then
-                        mute_trail(part)
+                        kill_particle(part)
                     end
                 end
-                item:Destroy()
+                safe_destroy(item)
+                return
             end
         end
     end
@@ -320,7 +331,7 @@ local function remove_camera_shake()
     setreadonly(meta, true)
 end
 
--- | debris & thrown cleaner | --
+-- | hybrid debris & thrown cleaner | --
 local function start_debris_cleaner()
     local whitelist = {
         ["ring"] = true,
@@ -360,6 +371,7 @@ local function start_debris_cleaner()
             or name:find("dash") or name:find("step") or name:find("land")
             or name:find("foot") or name:find("slide") or name:find("crater")
             or name:find("floor") or name:find("run") or name:find("walk")
+            or name:find("impact") or name:find("crack")
     end
 
     local function is_garou_name(name)
@@ -386,9 +398,7 @@ local function start_debris_cleaner()
         return false
     end
 
-    local function hide_debris(obj)
-        if not obj or not obj.Parent or is_whitelisted(obj) then return end
-
+    local function instant_hide(obj)
         if obj:IsA("BasePart") then
             obj.Transparency = 1
             obj.CanCollide = false
@@ -399,34 +409,26 @@ local function start_debris_cleaner()
                     part.Transparency = 1
                     part.CanCollide = false
                     part.CastShadow = false
-                elseif part:IsA("ParticleEmitter") then
-                    part.Enabled = false
-                    part.Rate = 0
-                    part:Clear()
                 end
             end
         end
     end
 
-    local function clean_model_contents(model)
-        for _, child in ipairs(model:GetChildren()) do
-            if not is_whitelisted(child) then
-                hide_debris(child)
-            elseif child:IsA("Model") then
-                clean_model_contents(child)
-            end
-        end
-    end
-
     local function handle_thrown_child(child)
-        if not child or not child.Parent then return end
-        if is_whitelisted(child) then
+        if not child then return end
+        if not is_whitelisted(child) then
+            instant_hide(child)
+            safe_destroy(child)
+        else
             if child:IsA("Model") then
-                clean_model_contents(child)
+                for _, sub in ipairs(child:GetChildren()) do
+                    if not is_whitelisted(sub) then
+                        instant_hide(sub)
+                        safe_destroy(sub)
+                    end
+                end
             end
-            return
         end
-        hide_debris(child)
     end
 
     local function is_debris_name(name)
@@ -453,12 +455,17 @@ local function start_debris_cleaner()
             if name == "thrown" then
                 monitor_folder(child)
             elseif name:find("vfxdebris") then
-                for _, v in ipairs(child:GetChildren()) do hide_debris(v) end
+                for _, v in ipairs(child:GetChildren()) do
+                    instant_hide(v)
+                    safe_destroy(v)
+                end
                 child.ChildAdded:Connect(function(v)
-                    task.defer(hide_debris, v)
+                    instant_hide(v)
+                    safe_destroy(v)
                 end)
             elseif is_debris_name(name) or is_smoke(name) or (not is_blue and is_garou_name(name)) then
-                hide_debris(child)
+                instant_hide(child)
+                safe_destroy(child)
             end
         end)
     end
