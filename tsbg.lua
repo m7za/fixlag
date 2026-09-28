@@ -1,3 +1,9 @@
+-- | Made By m7za | --
+
+-- | configuration | --
+local garou_mode = (getgenv and getgenv().color_garou) or _G.color_garou or color_garou or "transparent"
+local is_blue = tostring(garou_mode):lower() == "blue"
+
 -- | services | --
 local players = game:GetService("Players")
 local lighting = game:GetService("Lighting")
@@ -109,23 +115,47 @@ local function setup_character_and_effects()
         return name:find("smoke") or name:find("dust") or name:find("dirt") or name:find("puff")
     end
 
-    local function tweak_particle(item)
-        if item:IsA("Smoke") then
-            item.Enabled = false
-            item:Destroy()
-        elseif item:IsA("Trail") then
-            item.Color = ColorSequence.new(blue_color)
-            item.Texture = ""
-            item.LightEmission = 0.8
-        elseif item:IsA("ParticleEmitter") then
-            if is_smoke(item.Name:lower()) then
+    local function is_garou_effect(name)
+        return name:find("water") or name:find("flow") or name:find("stream") 
+            or name:find("whirlwind") or name:find("hunter") or name:find("slash")
+            or name:find("fang") or name:find("nado") or name:find("lethal")
+            or name:find("rocksmash") or name:find("aura") or name:find("beam")
+            or name:find("pillar") or name:find("rampage")
+    end
+
+    local function purge_visual(item)
+        if item:IsA("ParticleEmitter") or item:IsA("Trail") or item:IsA("Beam") 
+            or item:IsA("Highlight") or item:IsA("Smoke") or item:IsA("Fire") 
+            or item:IsA("Light") then
+            pcall(function()
                 item.Enabled = false
-                item:Clear()
+                if item:IsA("ParticleEmitter") then item:Clear() end
+            end)
+            item:Destroy()
+        end
+    end
+
+    local function tweak_particle(item)
+        if is_blue then
+            if item:IsA("Smoke") then
+                item.Enabled = false
                 item:Destroy()
-            else
+            elseif item:IsA("Trail") then
                 item.Color = ColorSequence.new(blue_color)
-                item.LightEmission = 1
+                item.Texture = ""
+                item.LightEmission = 0.8
+            elseif item:IsA("ParticleEmitter") then
+                if is_smoke(item.Name:lower()) then
+                    item.Enabled = false
+                    item:Clear()
+                    item:Destroy()
+                else
+                    item.Color = ColorSequence.new(blue_color)
+                    item.LightEmission = 1
+                end
             end
+        else
+            purge_visual(item)
         end
     end
 
@@ -146,13 +176,39 @@ local function setup_character_and_effects()
         local name = item.Name:lower()
         local my_name = local_player.Name:lower()
 
-        if item:IsA("Smoke") or is_smoke(name) then
-            if item:IsA("ParticleEmitter") then
-                item.Enabled = false
-                item:Clear()
+        if is_blue then
+            if item:IsA("Smoke") or is_smoke(name) then
+                if item:IsA("ParticleEmitter") then
+                    item.Enabled = false
+                    item:Clear()
+                end
+                item:Destroy()
+                return
             end
-            item:Destroy()
-            return
+        else
+            if item:IsA("Beam") or item:IsA("Trail") or item:IsA("Highlight") or item:IsA("Smoke") or item:IsA("Light") or is_smoke(name) then
+                purge_visual(item)
+                return
+            end
+            if item:IsA("ParticleEmitter") then
+                purge_visual(item)
+                return
+            end
+            if is_garou_effect(name) then
+                if item:IsA("BasePart") then
+                    item.Transparency = 1
+                    item.CanCollide = false
+                elseif item:IsA("Model") then
+                    for _, part in ipairs(item:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            part.Transparency = 1
+                            part.CanCollide = false
+                        end
+                    end
+                end
+                item:Destroy()
+                return
+            end
         end
 
         local is_clone = (name == my_name)
@@ -239,9 +295,63 @@ end
 
 -- | debris & thrown cleaner | --
 local function start_debris_cleaner()
+    local whitelist = {
+        ["ring"] = true,
+        ["debris2g"] = true,
+        ["projectile"] = true,
+        ["middlespin"] = true,
+        ["middlespinemit"] = true,
+        ["flash"] = true,
+        ["slash_teleport"] = true,
+        ["shurikenproj"] = true,
+        ["tparticles2"] = true,
+        ["proj"] = true,
+        ["adjusted"] = true,
+        ["general"] = true,
+        ["up"] = true,
+        ["up2"] = true,
+        ["go2"] = true,
+        ["dotted"] = true,
+        ["dragon"] = true,
+        ["kingcrab"] = true,
+        ["model"] = true,
+        ["preload"] = true
+    }
+
+    if is_blue then
+        whitelist["tornadomain"] = true
+        whitelist["spiral"] = true
+        whitelist["nadosmoke"] = true
+        whitelist["smokering"] = true
+        whitelist["clone_rig"] = true
+        whitelist["afterimage_clone"] = true
+    end
+
+    local function is_garou_name(name)
+        return name:find("water") or name:find("flow") or name:find("stream") 
+            or name:find("whirlwind") or name:find("hunter") or name:find("slash")
+            or name:find("fang") or name:find("nadosmoke") or name:find("smokering")
+            or name:find("tornadomain") or name:find("spiral")
+    end
+
+    local function is_whitelisted(obj)
+        if not obj then return true end
+        local name = obj.Name:lower()
+
+        if not is_blue and is_garou_name(name) then return false end
+        if whitelist[name] then return true end
+        if obj:FindFirstChildOfClass("Humanoid") then return true end
+        if obj.Parent and obj.Parent:FindFirstChildOfClass("Humanoid") then return true end
+
+        if obj:IsA("BasePart") and obj.Name == "Part" and obj.Size == Vector3.new(4, 4, 4) then
+            return true
+        end
+
+        return false
+    end
+
     local function delete_debris(obj)
-        if not obj or obj:FindFirstChildOfClass("Humanoid") then return end
-        if obj.Parent and obj.Parent:FindFirstChildOfClass("Humanoid") then return end
+        if not obj or not obj.Parent or is_whitelisted(obj) then return end
 
         if obj:IsA("BasePart") then
             obj.Transparency = 1
@@ -257,16 +367,37 @@ local function start_debris_cleaner()
         obj:Destroy()
     end
 
-    local function is_debris(name)
+    local function clean_model_contents(model)
+        for _, child in ipairs(model:GetChildren()) do
+            if not is_whitelisted(child) then
+                delete_debris(child)
+            elseif child:IsA("Model") then
+                clean_model_contents(child)
+            end
+        end
+    end
+
+    local function handle_thrown_child(child)
+        if not child or not child.Parent then return end
+        if is_whitelisted(child) then
+            if child:IsA("Model") then
+                clean_model_contents(child)
+            end
+            return
+        end
+        delete_debris(child)
+    end
+
+    local function is_debris_name(name)
         return name:find("debris") or name:find("starterdeb") or name:find("vfxdebris")
     end
 
     local function monitor_folder(folder)
         for _, child in ipairs(folder:GetChildren()) do
-            delete_debris(child)
+            handle_thrown_child(child)
         end
         folder.ChildAdded:Connect(function(child)
-            task.defer(delete_debris, child)
+            task.defer(handle_thrown_child, child)
         end)
     end
 
@@ -282,8 +413,10 @@ local function start_debris_cleaner()
                 monitor_folder(child)
             elseif name:find("vfxdebris") then
                 child:ClearAllChildren()
-                child.ChildAdded:Connect(function(v) task.defer(delete_debris, v) end)
-            elseif is_debris(name) then
+                child.ChildAdded:Connect(function(v)
+                    task.defer(delete_debris, v)
+                end)
+            elseif is_debris_name(name) or (not is_blue and is_garou_name(name)) then
                 delete_debris(child)
             end
         end)
@@ -322,5 +455,5 @@ end
 
 -- | engine settings | --
 pcall(function()
-      settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 
+    settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 
 end)
