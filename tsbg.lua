@@ -14,10 +14,10 @@ local local_player = players.LocalPlayer
 local terrain = workspace.Terrain
 local player_gui = local_player:WaitForChild("PlayerGui")
 
--- | helper: safe destroy for map debris only | --
+-- | helper: safe destroy for real debris | --
 local function safe_destroy(obj)
     task.defer(function()
-        task.wait()
+        task.wait(0.05)
         if obj and obj.Parent then
             pcall(function()
                 obj:Destroy()
@@ -119,13 +119,13 @@ local function remove_trees()
     map.ChildAdded:Connect(check_and_destroy)
 end
 
--- | character effects, smoke & garou visual suppression | --
+-- | visual lock & character suppression | --
 local function setup_character_and_effects()
     local blue_color = Color3.fromRGB(0, 85, 190)
     local invisible = NumberSequence.new(1)
     local zero_size = NumberSequence.new(0)
 
-    local function is_smoke_particle(name)
+    local function is_smoke_name(name)
         return name:find("smoke") or name:find("dust") or name:find("dirt") 
             or name:find("puff") or name:find("cloud") or name:find("ground") 
             or name:find("dash") or name:find("step") or name:find("land")
@@ -141,32 +141,92 @@ local function setup_character_and_effects()
             or name:find("beam") or name:find("pillar") or name:find("rampage") 
             or name:find("garou") or name:find("airtrail") or name:find("line") 
             or name:find("shot") or name:find("palm") or name:find("constantemit")
+            or name:find("middlespin") or name:find("spiral") or name:find("tornado")
+            or name:find("ring") or name:find("debris2g") or name:find("wind")
+    end
+
+    local function is_debris_name(name)
+        return name:find("debris") or name:find("starterdeb") or name:find("vfxdebris") 
+            or name:find("rock") or name:find("stone") or name:find("crater") 
+            or name:find("chunk") or name:find("fragment") or name:find("pebble") 
+            or name:find("rubble") or name:find("ground") or name:find("dirt")
+            or name:find("broken") or name:find("crack")
+    end
+
+    local function lock_part_invisible(part)
+        if not part:IsA("BasePart") then return end
+        pcall(function()
+            part.Transparency = 1
+            part.CastShadow = false
+        end)
+
+        for _, sub in ipairs(part:GetChildren()) do
+            if sub:IsA("Decal") or sub:IsA("Texture") then
+                sub.Transparency = 1
+            end
+        end
+
+        part.ChildAdded:Connect(function(sub)
+            if sub:IsA("Decal") or sub:IsA("Texture") then
+                sub.Transparency = 1
+            end
+        end)
+
+        part:GetPropertyChangedSignal("Transparency"):Connect(function()
+            if part.Transparency < 1 then
+                part.Transparency = 1
+            end
+        end)
     end
 
     local function mute_particle(item)
-        pcall(function()
-            item.Enabled = false
-            item.Rate = 0
-            item.Size = zero_size
-            item.Transparency = invisible
-            item.Texture = ""
-            item:Clear()
+        if not item:IsA("ParticleEmitter") then return end
+        local function silence()
+            pcall(function()
+                item.Enabled = false
+                item.Rate = 0
+                item.Size = zero_size
+                item.Transparency = invisible
+                item.Texture = ""
+                item:Clear()
+            end)
+        end
+        silence()
+        item:GetPropertyChangedSignal("Enabled"):Connect(function()
+            if item.Enabled then silence() end
+        end)
+        item:GetPropertyChangedSignal("Texture"):Connect(function()
+            if item.Texture ~= "" then silence() end
         end)
     end
 
     local function mute_trail(item)
-        pcall(function()
-            item.Enabled = false
-            item.Transparency = invisible
-            item.Texture = ""
+        if not item:IsA("Trail") then return end
+        local function silence()
+            pcall(function()
+                item.Enabled = false
+                item.Transparency = invisible
+                item.Texture = ""
+            end)
+        end
+        silence()
+        item:GetPropertyChangedSignal("Enabled"):Connect(function()
+            if item.Enabled then silence() end
         end)
     end
 
     local function mute_beam(item)
-        pcall(function()
-            item.Enabled = false
-            item.Transparency = invisible
-            item.Texture = ""
+        if not item:IsA("Beam") then return end
+        local function silence()
+            pcall(function()
+                item.Enabled = false
+                item.Transparency = invisible
+                item.Texture = ""
+            end)
+        end
+        silence()
+        item:GetPropertyChangedSignal("Enabled"):Connect(function()
+            if item.Enabled then silence() end
         end)
     end
 
@@ -178,7 +238,7 @@ local function setup_character_and_effects()
         local parent_name = parent and parent.Name:lower() or ""
 
         if item:IsA("ParticleEmitter") then
-            if is_smoke_particle(name) or is_smoke_particle(parent_name) then
+            if is_smoke_name(name) or is_smoke_name(parent_name) then
                 mute_particle(item)
                 return
             end
@@ -231,19 +291,38 @@ local function setup_character_and_effects()
 
         if item:IsA("BasePart") then
             if item:IsDescendantOf(local_player.Character) then return end
+            if parent and parent:FindFirstChildOfClass("Humanoid") then return end
+
+            if is_debris_name(name) or is_smoke_name(name) then
+                lock_part_invisible(item)
+                item.CanCollide = false
+                safe_destroy(item)
+                return
+            end
 
             if not is_blue and is_garou_visual(name) then
-                item.Transparency = 1
-                item.CastShadow = false
-                for _, sub in ipairs(item:GetChildren()) do
-                    if sub:IsA("Decal") or sub:IsA("Texture") then
-                        sub.Transparency = 1
-                    end
-                end
+                lock_part_invisible(item)
                 return
             end
         elseif item:IsA("Model") then
             if item:FindFirstChildOfClass("Humanoid") then return end
+
+            if is_debris_name(name) or is_smoke_name(name) then
+                for _, part in ipairs(item:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        lock_part_invisible(part)
+                        part.CanCollide = false
+                    end
+                end
+                item.DescendantAdded:Connect(function(part)
+                    if part:IsA("BasePart") then
+                        lock_part_invisible(part)
+                        part.CanCollide = false
+                    end
+                end)
+                safe_destroy(item)
+                return
+            end
 
             local my_name = local_player.Name:lower()
             local is_clone = (name == my_name)
@@ -255,9 +334,8 @@ local function setup_character_and_effects()
             if is_clone then
                 for _, part in ipairs(item:GetDescendants()) do
                     if part:IsA("BasePart") then
-                        part.Transparency = 1
+                        lock_part_invisible(part)
                         part.CanCollide = false
-                        part.CastShadow = false
                     elseif part:IsA("ParticleEmitter") then
                         mute_particle(part)
                     elseif part:IsA("Trail") then
@@ -266,6 +344,18 @@ local function setup_character_and_effects()
                         mute_beam(part)
                     end
                 end
+                item.DescendantAdded:Connect(function(part)
+                    if part:IsA("BasePart") then
+                        lock_part_invisible(part)
+                        part.CanCollide = false
+                    elseif part:IsA("ParticleEmitter") then
+                        mute_particle(part)
+                    elseif part:IsA("Trail") then
+                        mute_trail(part)
+                    elseif part:IsA("Beam") then
+                        mute_beam(part)
+                    end
+                end)
             end
         end
     end
@@ -358,10 +448,6 @@ local function start_debris_cleaner()
         ["afterimage_clone"] = true
     }
 
-    local function is_pure_debris(name)
-        return name:find("debris") or name:find("starterdeb") or name:find("vfxdebris") or name:find("rock")
-    end
-
     local function is_whitelisted(obj)
         if not obj then return true end
         local name = obj.Name:lower()
@@ -377,21 +463,71 @@ local function start_debris_cleaner()
         return false
     end
 
-    local function make_transparent(obj)
+    local function lock_part_invisible(part)
+        if not part:IsA("BasePart") then return end
+        pcall(function()
+            part.Transparency = 1
+            part.CastShadow = false
+        end)
+
+        for _, sub in ipairs(part:GetChildren()) do
+            if sub:IsA("Decal") or sub:IsA("Texture") then
+                sub.Transparency = 1
+            end
+        end
+
+        part.ChildAdded:Connect(function(sub)
+            if sub:IsA("Decal") or sub:IsA("Texture") then
+                sub.Transparency = 1
+            end
+        end)
+
+        part:GetPropertyChangedSignal("Transparency"):Connect(function()
+            if part.Transparency < 1 then
+                part.Transparency = 1
+            end
+        end)
+    end
+
+    local function mute_particle(item)
+        if not item:IsA("ParticleEmitter") then return end
+        local function silence()
+            pcall(function()
+                item.Enabled = false
+                item.Rate = 0
+                item.Size = NumberSequence.new(0)
+                item.Transparency = NumberSequence.new(1)
+                item.Texture = ""
+                item:Clear()
+            end)
+        end
+        silence()
+        item:GetPropertyChangedSignal("Enabled"):Connect(function()
+            if item.Enabled then silence() end
+        end)
+        item:GetPropertyChangedSignal("Texture"):Connect(function()
+            if item.Texture ~= "" then silence() end
+        end)
+    end
+
+    local function make_transparent_tree(obj)
         if obj:IsA("BasePart") then
-            obj.Transparency = 1
-            obj.CastShadow = false
+            lock_part_invisible(obj)
         elseif obj:IsA("Model") then
             for _, part in ipairs(obj:GetDescendants()) do
                 if part:IsA("BasePart") then
-                    part.Transparency = 1
-                    part.CastShadow = false
+                    lock_part_invisible(part)
                 elseif part:IsA("ParticleEmitter") then
-                    part.Enabled = false
-                    part.Rate = 0
-                    part:Clear()
+                    mute_particle(part)
                 end
             end
+            obj.DescendantAdded:Connect(function(part)
+                if part:IsA("BasePart") then
+                    lock_part_invisible(part)
+                elseif part:IsA("ParticleEmitter") then
+                    mute_particle(part)
+                end
+            end)
         end
     end
 
@@ -400,23 +536,18 @@ local function start_debris_cleaner()
 
         if is_whitelisted(child) then
             if not is_blue then
-                make_transparent(child)
+                make_transparent_tree(child)
             end
             return
         end
 
-        local name = child.Name:lower()
-        if is_pure_debris(name) then
-            if child:IsA("BasePart") then
-                child.Transparency = 1
-                child.CanCollide = false
-            end
-            safe_destroy(child)
-        else
-            if not is_blue then
-                make_transparent(child)
-            end
+        if child:IsA("BasePart") then
+            lock_part_invisible(child)
+            child.CanCollide = false
+        elseif child:IsA("Model") then
+            make_transparent_tree(child)
         end
+        safe_destroy(child)
     end
 
     local function monitor_folder(folder)
@@ -439,22 +570,12 @@ local function start_debris_cleaner()
             if name == "thrown" then
                 monitor_folder(child)
             elseif name:find("vfxdebris") then
-                for _, v in ipairs(child:GetChildren()) do
-                    if v:IsA("BasePart") then v.Transparency = 1 v.CanCollide = false end
-                    safe_destroy(v)
-                end
-                child.ChildAdded:Connect(function(v)
-                    task.defer(function()
-                        if v:IsA("BasePart") then v.Transparency = 1 v.CanCollide = false end
-                        safe_destroy(v)
-                    end)
-                end)
-            elseif is_pure_debris(name) then
-                if child:IsA("BasePart") then
-                    child.Transparency = 1
-                    child.CanCollide = false
-                end
+                make_transparent_tree(child)
                 safe_destroy(child)
+                child.ChildAdded:Connect(function(v)
+                    make_transparent_tree(v)
+                    safe_destroy(v)
+                end)
             end
         end)
     end
