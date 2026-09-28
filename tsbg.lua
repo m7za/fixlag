@@ -14,7 +14,7 @@ local local_player = players.LocalPlayer
 local terrain = workspace.Terrain
 local player_gui = local_player:WaitForChild("PlayerGui")
 
--- | helper: safe destroy for real debris only | --
+-- | helper: safe destroy for map debris only | --
 local function safe_destroy(obj)
     task.defer(function()
         task.wait()
@@ -119,19 +119,18 @@ local function remove_trees()
     map.ChildAdded:Connect(check_and_destroy)
 end
 
--- | character effects, smoke & garou visual hiding | --
+-- | character effects, smoke & garou visual suppression | --
 local function setup_character_and_effects()
     local blue_color = Color3.fromRGB(0, 85, 190)
     local invisible = NumberSequence.new(1)
     local zero_size = NumberSequence.new(0)
 
-    local function is_smoke(name)
+    local function is_smoke_particle(name)
         return name:find("smoke") or name:find("dust") or name:find("dirt") 
             or name:find("puff") or name:find("cloud") or name:find("ground") 
             or name:find("dash") or name:find("step") or name:find("land")
             or name:find("foot") or name:find("slide") or name:find("crater")
-            or name:find("floor") or name:find("run") or name:find("walk")
-            or name:find("impact") or name:find("crack")
+            or name:find("impact")
     end
 
     local function is_garou_visual(name)
@@ -155,6 +154,22 @@ local function setup_character_and_effects()
         end)
     end
 
+    local function mute_trail(item)
+        pcall(function()
+            item.Enabled = false
+            item.Transparency = invisible
+            item.Texture = ""
+        end)
+    end
+
+    local function mute_beam(item)
+        pcall(function()
+            item.Enabled = false
+            item.Transparency = invisible
+            item.Texture = ""
+        end)
+    end
+
     local function handle_descendant(item)
         if not item then return end
 
@@ -163,7 +178,7 @@ local function setup_character_and_effects()
         local parent_name = parent and parent.Name:lower() or ""
 
         if item:IsA("ParticleEmitter") then
-            if is_smoke(name) or is_smoke(parent_name) then
+            if is_smoke_particle(name) or is_smoke_particle(parent_name) then
                 mute_particle(item)
                 return
             end
@@ -182,17 +197,12 @@ local function setup_character_and_effects()
 
         if item:IsA("Smoke") or item:IsA("Fire") then
             pcall(function() item.Enabled = false end)
-            safe_destroy(item)
             return
         end
 
         if item:IsA("Trail") then
             if not is_blue or is_garou_visual(name) or is_garou_visual(parent_name) then
-                pcall(function()
-                    item.Enabled = false
-                    item.Transparency = invisible
-                    item.Texture = ""
-                end)
+                mute_trail(item)
             else
                 item.Color = ColorSequence.new(blue_color)
                 item.Texture = ""
@@ -203,11 +213,7 @@ local function setup_character_and_effects()
 
         if item:IsA("Beam") then
             if not is_blue or is_garou_visual(name) or is_garou_visual(parent_name) then
-                pcall(function()
-                    item.Enabled = false
-                    item.Transparency = invisible
-                    item.Texture = ""
-                end)
+                mute_beam(item)
             end
             return
         end
@@ -225,14 +231,6 @@ local function setup_character_and_effects()
 
         if item:IsA("BasePart") then
             if item:IsDescendantOf(local_player.Character) then return end
-            if parent and parent:FindFirstChildOfClass("Humanoid") then return end
-
-            if is_smoke(name) then
-                item.Transparency = 1
-                item.CastShadow = false
-                safe_destroy(item)
-                return
-            end
 
             if not is_blue and is_garou_visual(name) then
                 item.Transparency = 1
@@ -259,11 +257,15 @@ local function setup_character_and_effects()
                     if part:IsA("BasePart") then
                         part.Transparency = 1
                         part.CanCollide = false
+                        part.CastShadow = false
                     elseif part:IsA("ParticleEmitter") then
                         mute_particle(part)
+                    elseif part:IsA("Trail") then
+                        mute_trail(part)
+                    elseif part:IsA("Beam") then
+                        mute_beam(part)
                     end
                 end
-                safe_destroy(item)
             end
         end
     end
@@ -319,7 +321,7 @@ local function remove_camera_shake()
     setreadonly(meta, false)
     meta.__index = newcclosure(function(obj, key)
         if key == "CamShakeCF" and obj == _G then return CFrame.new() end
-        if key == "CameraOffset" and obj:IsA("Humanoid") then return Vector3.zero end
+        if key == "CameraOffset" and typeof(obj) == "Instance" and obj:IsA("Humanoid") then return Vector3.zero end
         return old_index(obj, key)
     end)
     setreadonly(meta, true)
@@ -375,7 +377,7 @@ local function start_debris_cleaner()
         return false
     end
 
-    local function make_transparent_only(obj)
+    local function make_transparent(obj)
         if obj:IsA("BasePart") then
             obj.Transparency = 1
             obj.CastShadow = false
@@ -398,7 +400,7 @@ local function start_debris_cleaner()
 
         if is_whitelisted(child) then
             if not is_blue then
-                make_transparent_only(child)
+                make_transparent(child)
             end
             return
         end
@@ -412,7 +414,7 @@ local function start_debris_cleaner()
             safe_destroy(child)
         else
             if not is_blue then
-                make_transparent_only(child)
+                make_transparent(child)
             end
         end
     end
