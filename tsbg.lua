@@ -1,6 +1,5 @@
 -- | Made By m7za | --
 
-
 -- config
 local garou_mode = (getgenv and getgenv().garou_effects) or _G.garou_effects or garou_effects or "transparent"
 local is_blue = tostring(garou_mode):lower() == "blue"
@@ -26,6 +25,21 @@ local run_service = game:GetService("RunService")
 local local_player = players.LocalPlayer
 local terrain = workspace.Terrain
 local player_gui = local_player:WaitForChild("PlayerGui")
+
+-- stadium protection
+local function is_stadium_bedrock(item)
+    if not item then return false end
+    local name = item.Name:lower()
+    if name == "stadiumbedrock" then return true end
+    local parent = item.Parent
+    if parent and parent.Name:lower() == "stadium" and name == "stadiumbedrock" then
+        return true
+    end
+    if item:FindFirstAncestor("stadiumBedrock") then
+        return true
+    end
+    return false
+end
 
 -- char check
 local function is_real_character(model)
@@ -54,9 +68,16 @@ local function is_character_part(item)
     return false
 end
 
+-- global protect
+local function is_protected(item)
+    if not item then return false end
+    if is_stadium_bedrock(item) then return true end
+    return is_character_part(item)
+end
+
 -- clone check
 local function is_clone_model(model)
-    if not model or not model:IsA("Model") then return false end
+    if not model or not model:IsA("Model") or is_protected(model) then return false end
     if is_real_character(model) then return false end
 
     local name = model.Name:lower()
@@ -187,8 +208,9 @@ end
 -- trees
 local function remove_trees()
     local function check_tree(item)
-        if not item or not item.Parent then return end
+        if not item or not item.Parent or is_protected(item) then return end
         local name = item.Name:lower()
+        if name:find("stadium") then return end
         if name:find("tree") or name == "3d" or name:find("foliage") or name:find("leaf") or name:find("bush") then
             pcall(function()
                 item:Destroy()
@@ -239,6 +261,7 @@ local function setup_character_and_effects()
     end
 
     local function is_debris_name(name)
+        if name:find("stadium") or name:find("bedrock") then return false end
         return name:find("debris") or name:find("starterdeb") or name:find("vfxdebris") 
             or name:find("rock") or name:find("stone") or name:find("chunk") 
             or name:find("fragment") or name:find("pebble") or name:find("rubble") 
@@ -246,7 +269,7 @@ local function setup_character_and_effects()
     end
 
     local function lock_part_invisible(part)
-        if not part:IsA("BasePart") or is_character_part(part) then return end
+        if not part:IsA("BasePart") or is_protected(part) then return end
         pcall(function()
             part.Transparency = 1
             part.CanCollide = false
@@ -266,14 +289,14 @@ local function setup_character_and_effects()
         end))
 
         track_conn(part:GetPropertyChangedSignal("Transparency"):Connect(function()
-            if not is_character_part(part) and part.Transparency < 1 then
+            if not is_protected(part) and part.Transparency < 1 then
                 part.Transparency = 1
             end
         end))
     end
 
     local function mute_particle(item)
-        if not item:IsA("ParticleEmitter") then return end
+        if not item:IsA("ParticleEmitter") or is_protected(item) then return end
         local function silence()
             pcall(function()
                 item.Enabled = false
@@ -294,7 +317,7 @@ local function setup_character_and_effects()
     end
 
     local function mute_trail(item)
-        if not item:IsA("Trail") then return end
+        if not item:IsA("Trail") or is_protected(item) then return end
         local function silence()
             pcall(function()
                 item.Enabled = false
@@ -309,7 +332,7 @@ local function setup_character_and_effects()
     end
 
     local function mute_beam(item)
-        if not item:IsA("Beam") then return end
+        if not item:IsA("Beam") or is_protected(item) then return end
         local function silence()
             pcall(function()
                 item.Enabled = false
@@ -356,7 +379,7 @@ local function setup_character_and_effects()
     end
 
     local function handle_descendant(item)
-        if not item then return end
+        if not item or is_protected(item) then return end
 
         local name = item.Name:lower()
         local parent = item.Parent
@@ -412,10 +435,6 @@ local function setup_character_and_effects()
                     item.OutlineTransparency = 1
                 end)
             end
-            return
-        end
-
-        if is_character_part(item) then
             return
         end
 
@@ -517,7 +536,7 @@ local function start_debris_cleaner()
 
     local function is_critical(obj)
         if not obj then return true end
-        if is_character_part(obj) then return true end
+        if is_protected(obj) then return true end
 
         local name = obj.Name:lower()
         if critical_hitboxes[name] then return true end
@@ -530,7 +549,7 @@ local function start_debris_cleaner()
     end
 
     local function lock_part_invisible(part)
-        if not part:IsA("BasePart") or is_character_part(part) then return end
+        if not part:IsA("BasePart") or is_protected(part) then return end
         pcall(function()
             part.Transparency = 1
             part.CanCollide = false
@@ -550,14 +569,14 @@ local function start_debris_cleaner()
         end))
 
         track_conn(part:GetPropertyChangedSignal("Transparency"):Connect(function()
-            if not is_character_part(part) and part.Transparency < 1 then
+            if not is_protected(part) and part.Transparency < 1 then
                 part.Transparency = 1
             end
         end))
     end
 
     local function mute_particle(item)
-        if not item:IsA("ParticleEmitter") then return end
+        if not item:IsA("ParticleEmitter") or is_protected(item) then return end
         local function silence()
             pcall(function()
                 item.Enabled = false
@@ -578,7 +597,7 @@ local function start_debris_cleaner()
     end
 
     local function handle_thrown_element(child)
-        if not child or not child.Parent or is_character_part(child) then return end
+        if not child or not child.Parent or is_protected(child) then return end
 
         if is_critical(child) then
             return
@@ -613,7 +632,7 @@ local function start_debris_cleaner()
 
     local function inspect_element(child)
         task.defer(function()
-            if not child or not child.Parent or is_character_part(child) then return end
+            if not child or not child.Parent or is_protected(child) then return end
             local name = child.Name:lower()
 
             if name == "thrown" then
