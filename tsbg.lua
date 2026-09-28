@@ -26,6 +26,35 @@ local function safe_destroy(obj)
     end)
 end
 
+-- | helper: character protection check | --
+local function is_character_part(item)
+    if not item then return false end
+
+    local char = local_player.Character
+    if char and (item == char or item:IsDescendantOf(char)) then
+        return true
+    end
+
+    if item.Name == local_player.Name then
+        return true
+    end
+
+    local model = item:FindFirstAncestorOfClass("Model")
+    if model then
+        if model == char or model.Name == local_player.Name then
+            return true
+        end
+        if players:GetPlayerFromCharacter(model) or players:FindFirstChild(model.Name) then
+            return true
+        end
+        if model:FindFirstChildOfClass("Humanoid") then
+            return true
+        end
+    end
+
+    return false
+end
+
 -- | skybox & lighting | --
 local function setup_lighting()
     local sky_textures = {
@@ -119,7 +148,7 @@ local function remove_trees()
     map.ChildAdded:Connect(check_and_destroy)
 end
 
--- | visual lock & character suppression | --
+-- | visual suppression | --
 local function setup_character_and_effects()
     local blue_color = Color3.fromRGB(0, 85, 190)
     local invisible = NumberSequence.new(1)
@@ -147,14 +176,13 @@ local function setup_character_and_effects()
 
     local function is_debris_name(name)
         return name:find("debris") or name:find("starterdeb") or name:find("vfxdebris") 
-            or name:find("rock") or name:find("stone") or name:find("crater") 
-            or name:find("chunk") or name:find("fragment") or name:find("pebble") 
-            or name:find("rubble") or name:find("ground") or name:find("dirt")
+            or name:find("rock") or name:find("stone") or name:find("chunk") 
+            or name:find("fragment") or name:find("pebble") or name:find("rubble") 
             or name:find("broken") or name:find("crack")
     end
 
     local function lock_part_invisible(part)
-        if not part:IsA("BasePart") then return end
+        if not part:IsA("BasePart") or is_character_part(part) then return end
         pcall(function()
             part.Transparency = 1
             part.CastShadow = false
@@ -173,7 +201,7 @@ local function setup_character_and_effects()
         end)
 
         part:GetPropertyChangedSignal("Transparency"):Connect(function()
-            if part.Transparency < 1 then
+            if not is_character_part(part) and part.Transparency < 1 then
                 part.Transparency = 1
             end
         end)
@@ -289,10 +317,11 @@ local function setup_character_and_effects()
             return
         end
 
-        if item:IsA("BasePart") then
-            if item:IsDescendantOf(local_player.Character) then return end
-            if parent and parent:FindFirstChildOfClass("Humanoid") then return end
+        if is_character_part(item) then
+            return
+        end
 
+        if item:IsA("BasePart") then
             if is_debris_name(name) or is_smoke_name(name) then
                 lock_part_invisible(item)
                 item.CanCollide = false
@@ -305,8 +334,6 @@ local function setup_character_and_effects()
                 return
             end
         elseif item:IsA("Model") then
-            if item:FindFirstChildOfClass("Humanoid") then return end
-
             if is_debris_name(name) or is_smoke_name(name) then
                 for _, part in ipairs(item:GetDescendants()) do
                     if part:IsA("BasePart") then
@@ -324,12 +351,8 @@ local function setup_character_and_effects()
                 return
             end
 
-            local my_name = local_player.Name:lower()
-            local is_clone = (name == my_name)
-                or name:find("clone")
-                or name:find("afterimage")
-                or name:find("ghost")
-                or name:find("flowing")
+            local is_clone = (name:find("clone") or name:find("afterimage") or name:find("ghost") or name:find("flowing")) 
+                and not is_character_part(item)
 
             if is_clone then
                 for _, part in ipairs(item:GetDescendants()) do
@@ -450,11 +473,10 @@ local function start_debris_cleaner()
 
     local function is_whitelisted(obj)
         if not obj then return true end
-        local name = obj.Name:lower()
+        if is_character_part(obj) then return true end
 
+        local name = obj.Name:lower()
         if whitelist[name] then return true end
-        if obj:FindFirstChildOfClass("Humanoid") then return true end
-        if obj.Parent and obj.Parent:FindFirstChildOfClass("Humanoid") then return true end
 
         if obj:IsA("BasePart") and obj.Name == "Part" and obj.Size == Vector3.new(4, 4, 4) then
             return true
@@ -464,7 +486,7 @@ local function start_debris_cleaner()
     end
 
     local function lock_part_invisible(part)
-        if not part:IsA("BasePart") then return end
+        if not part:IsA("BasePart") or is_character_part(part) then return end
         pcall(function()
             part.Transparency = 1
             part.CastShadow = false
@@ -483,7 +505,7 @@ local function start_debris_cleaner()
         end)
 
         part:GetPropertyChangedSignal("Transparency"):Connect(function()
-            if part.Transparency < 1 then
+            if not is_character_part(part) and part.Transparency < 1 then
                 part.Transparency = 1
             end
         end)
@@ -511,6 +533,8 @@ local function start_debris_cleaner()
     end
 
     local function make_transparent_tree(obj)
+        if is_character_part(obj) then return end
+
         if obj:IsA("BasePart") then
             lock_part_invisible(obj)
         elseif obj:IsA("Model") then
@@ -532,7 +556,7 @@ local function start_debris_cleaner()
     end
 
     local function handle_thrown_child(child)
-        if not child or not child.Parent then return end
+        if not child or not child.Parent or is_character_part(child) then return end
 
         if is_whitelisted(child) then
             if not is_blue then
@@ -564,7 +588,7 @@ local function start_debris_cleaner()
 
     local function inspect_element(child)
         task.defer(function()
-            if not child or not child.Parent then return end
+            if not child or not child.Parent or is_character_part(child) then return end
             local name = child.Name:lower()
 
             if name == "thrown" then
