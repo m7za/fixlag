@@ -1,10 +1,10 @@
 -- | Made By m7za | --
 
--- | configuration | --
+-- config
 local garou_mode = (getgenv and getgenv().garou_effects) or _G.garou_effects or garou_effects or "transparent"
 local is_blue = tostring(garou_mode):lower() == "blue"
 
--- | cleanup previous connections | --
+-- cleanup
 if getgenv()._FixLagConnections then
     for _, conn in ipairs(getgenv()._FixLagConnections) do
         pcall(function() conn:Disconnect() end)
@@ -16,7 +16,7 @@ local function track_conn(conn)
     return conn
 end
 
--- | services | --
+-- services
 local players = game:GetService("Players")
 local lighting = game:GetService("Lighting")
 local workspace = game:GetService("Workspace")
@@ -26,7 +26,7 @@ local local_player = players.LocalPlayer
 local terrain = workspace.Terrain
 local player_gui = local_player:WaitForChild("PlayerGui")
 
--- | helper: character protection | --
+-- char check
 local function is_real_character(model)
     if not model or not model:IsA("Model") then return false end
     if model == local_player.Character then return true end
@@ -53,7 +53,7 @@ local function is_character_part(item)
     return false
 end
 
--- | helper: clone detection | --
+-- clone check
 local function is_clone_model(model)
     if not model or not model:IsA("Model") then return false end
     if is_real_character(model) then return false end
@@ -70,85 +70,88 @@ local function is_clone_model(model)
     return false
 end
 
--- | skybox & lighting | --
+-- sky & light
 local function setup_lighting()
-    local sky_textures = {
-        Bk = "rbxassetid://92959017845968",
-        Ft = "rbxassetid://129304841254693",
-        Lf = "rbxassetid://129249062260004",
-        Rt = "rbxassetid://117319232583147",
-        Up = "rbxassetid://121193772599100",
-        Dn = "rbxassetid://115022734343595"
+    local SkyIDs = {
+        Bk = 92959017845968,
+        Ft = 129304841254693,
+        Lf = 129249062260004,
+        Rt = 117319232583147,
+        Up = 121193772599100,
+        Dn = 115022734343595
     }
 
-    local function apply_sky(sky)
-        if not sky or not sky:IsA("Sky") then return end
-        for side, id in pairs(sky_textures) do
-            local prop = "Skybox" .. side
-            if sky[prop] ~= id then
-                sky[prop] = id
-            end
+    local function kill_sun(sky)
+        if sky then
+            sky.SunAngularSize = 0
+            sky.SunTextureId = ""
+            sky.MoonAngularSize = 0
+            sky.MoonTextureId = ""
         end
-        sky.SunAngularSize = 0
-        sky.SunTextureId = ""
-        sky.MoonAngularSize = 0
-        sky.MoonTextureId = ""
     end
 
-    local function update_lighting()
+    local function apply_sky()
+        for _, v in ipairs(lighting:GetChildren()) do
+            if v:IsA("Sky") and v.Name ~= "CustomSky" then
+                v:Destroy()
+            end
+        end
+
+        local existing = lighting:FindFirstChild("CustomSky")
+        if not existing then
+            local s = Instance.new("Sky")
+            s.Name = "CustomSky"
+            for k, id in pairs(SkyIDs) do
+                s["Skybox" .. k] = "rbxassetid://" .. id
+            end
+            kill_sun(s)
+            s.Parent = lighting
+        else
+            kill_sun(existing)
+        end
+    end
+
+    local function clean_lighting()
         lighting.ClockTime = 12
         lighting.GlobalShadows = false
         lighting.Brightness = 0.8
-        lighting.OutdoorAmbient = Color3.fromRGB(120, 120, 120)
-        lighting.Ambient = Color3.fromRGB(120, 120, 120)
         lighting.ExposureCompensation = -0.2
-        lighting.FogStart = 9e9
-        lighting.FogEnd = 9e9
+        lighting.FogStart, lighting.FogEnd = 9e9, 9e9
 
-        local found_sky = false
-        for _, item in ipairs(lighting:GetChildren()) do
-            if item:IsA("Sky") then
-                apply_sky(item)
-                found_sky = true
-            elseif item:IsA("Atmosphere") then
-                item.Density = 0
-                item.Haze = 0
-                item.Glare = 0
-            elseif item:IsA("PostEffect") or item:IsA("SunRaysEffect") then
-                item.Enabled = false
+        for _, v in ipairs(lighting:GetChildren()) do
+            if v:IsA("PostEffect") or v:IsA("SunRaysEffect") then
+                v.Enabled = false
+            elseif v:IsA("Atmosphere") then
+                v.Density = 0
+                v.Haze = 0
+                v.Glare = 0
             end
-        end
-
-        if not found_sky then
-            local custom_sky = Instance.new("Sky")
-            custom_sky.Name = "CustomSky"
-            apply_sky(custom_sky)
-            custom_sky.Parent = lighting
         end
     end
 
-    update_lighting()
+    apply_sky()
+    clean_lighting()
 
-    track_conn(lighting.Changed:Connect(function()
-        update_lighting()
-    end))
-
-    track_conn(lighting.ChildAdded:Connect(function(child)
-        task.defer(function()
-            if child:IsA("Sky") then
-                apply_sky(child)
-            end
-            update_lighting()
-        end)
+    track_conn(lighting.ChildAdded:Connect(function(v)
+        if v:IsA("Sky") and v.Name ~= "CustomSky" then
+            task.wait()
+            v:Destroy()
+            apply_sky()
+        elseif v:IsA("Atmosphere") then
+            v.Density = 0
+            v.Haze = 0
+            v.Glare = 0
+        end
     end))
 
     track_conn(local_player.CharacterAdded:Connect(function()
         task.wait(0.2)
-        update_lighting()
+        apply_sky()
+        clean_lighting()
     end))
 end
 
--- | clouds removal | --
+-- clouds
 local function remove_clouds()
     if not terrain then return end
     for _, item in ipairs(terrain:GetChildren()) do
@@ -159,7 +162,7 @@ local function remove_clouds()
     end))
 end
 
--- | tree & 3d removal | --
+-- trees
 local function remove_trees()
     local function check_and_destroy(item)
         if not item or not item.Parent then return end
@@ -187,7 +190,7 @@ local function remove_trees()
     end
 end
 
--- | visual lock & suppression | --
+-- vfx lock
 local function setup_character_and_effects()
     local blue_color = Color3.fromRGB(0, 85, 190)
     local invisible = NumberSequence.new(1)
@@ -429,7 +432,7 @@ local function setup_character_and_effects()
     end))
 end
 
--- | fps & ping counter | --
+-- fps & ping
 local function create_fps_counter()
     local existing_gui = player_gui:FindFirstChild("FPSPingCounter")
     if existing_gui then existing_gui:Destroy() end
@@ -464,7 +467,7 @@ local function create_fps_counter()
     end))
 end
 
--- | camera shake removal | --
+-- cam shake
 local function remove_camera_shake()
     if not (getrawmetatable and setreadonly) then return end
     local meta = getrawmetatable(game)
@@ -478,7 +481,7 @@ local function remove_camera_shake()
     setreadonly(meta, true)
 end
 
--- | debris & thrown  | --
+-- debris
 local function start_debris_cleaner()
     local critical_hitboxes = {
         ["projectile"] = true,
@@ -608,13 +611,13 @@ local function start_debris_cleaner()
     track_conn(workspace.ChildAdded:Connect(inspect_element))
 end
 
--- | fps unlocker | --
+-- fps uncap
 local function unlock_fps()
     local uncap = setfpscap or set_fps_cap
     if uncap then uncap(999) end
 end
 
--- | execution | --
+-- exec
 local modules = {
     setup_lighting,
     remove_clouds,
@@ -630,7 +633,7 @@ for _, run_module in ipairs(modules) do
     task.spawn(pcall, run_module)
 end
 
--- | engine settings | --
+-- settings
 pcall(function()
     settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 
 end)
