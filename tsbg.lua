@@ -14,7 +14,7 @@ local local_player = players.LocalPlayer
 local terrain = workspace.Terrain
 local player_gui = local_player:WaitForChild("PlayerGui")
 
--- | helper: character protection | --
+-- | helper: real character protection | --
 local function is_real_character(model)
     if not model or not model:IsA("Model") then return false end
     if model == local_player.Character then return true end
@@ -39,39 +39,6 @@ local function is_character_part(item)
     end
 
     return false
-end
-
--- | helper: primary part protection | --
-local function is_essential_part(obj)
-    if not obj then return true end
-    if is_character_part(obj) then return true end
-
-    if obj:IsA("Model") and obj.PrimaryPart then
-        return true
-    end
-
-    if obj:IsA("BasePart") then
-        local parent = obj.Parent
-        if parent and parent:IsA("Model") and parent.PrimaryPart == obj then
-            return true
-        end
-    end
-
-    return false
-end
-
--- | helper: safe destroy | --
-local function safe_destroy(obj)
-    if not obj or not obj.Parent or is_essential_part(obj) then return end
-
-    task.defer(function()
-        task.wait(0.05)
-        if obj and obj.Parent and not is_essential_part(obj) then
-            pcall(function()
-                obj:Destroy()
-            end)
-        end
-    end)
 end
 
 -- | helper: clone detection | --
@@ -102,8 +69,10 @@ local function setup_lighting()
         Dn = "rbxassetid://115022734343595"
     }
 
+    local is_updating = false
+
     local function apply_sky(sky)
-        if not sky:IsA("Sky") then return end
+        if not sky or not sky:IsA("Sky") then return end
         for side, id in pairs(sky_textures) do
             local prop = "Skybox" .. side
             if sky[prop] ~= id then
@@ -117,6 +86,9 @@ local function setup_lighting()
     end
 
     local function update_lighting()
+        if is_updating then return end
+        is_updating = true
+
         lighting.ClockTime = 12
         lighting.GlobalShadows = false
         lighting.Brightness = 0.8
@@ -126,9 +98,11 @@ local function setup_lighting()
         lighting.FogStart = 9e9
         lighting.FogEnd = 9e9
 
+        local found_sky = false
         for _, item in ipairs(lighting:GetChildren()) do
             if item:IsA("Sky") then
                 apply_sky(item)
+                found_sky = true
             elseif item:IsA("Atmosphere") then
                 item.Density = 0
                 item.Haze = 0
@@ -137,20 +111,37 @@ local function setup_lighting()
                 item.Enabled = false
             end
         end
-    end
 
-    local custom_sky = lighting:FindFirstChildOfClass("Sky")
-    if not custom_sky then
-        custom_sky = Instance.new("Sky")
-        custom_sky.Name = "CustomSky"
-        custom_sky.Parent = lighting
+        if not found_sky then
+            local custom_sky = Instance.new("Sky")
+            custom_sky.Name = "CustomSky"
+            apply_sky(custom_sky)
+            custom_sky.Parent = lighting
+        end
+
+        is_updating = false
     end
-    apply_sky(custom_sky)
 
     update_lighting()
-    lighting.Changed:Connect(update_lighting)
-    lighting.ChildAdded:Connect(function()
-        task.wait()
+
+    lighting.Changed:Connect(function(prop)
+        if prop == "ClockTime" or prop == "OutdoorAmbient" or prop == "Ambient" or prop == "FogEnd" then
+            update_lighting()
+        end
+    end)
+
+    lighting.ChildAdded:Connect(function(child)
+        task.defer(function()
+            if child:IsA("Sky") then
+                apply_sky(child)
+            else
+                update_lighting()
+            end
+        end)
+    end)
+
+    local_player.CharacterAdded:Connect(function()
+        task.wait(0.5)
         update_lighting()
     end)
 end
@@ -171,20 +162,30 @@ local function remove_trees()
     local map = workspace:WaitForChild("Map", 5) or workspace:FindFirstChild("Map")
     if not map then return end
 
-    local function check_and_destroy(item)
+    local function check_and_hide(item)
         local name = item.Name:lower()
         if name:find("tree") or name == "3d" then
-            safe_destroy(item)
+            if item:IsA("BasePart") then
+                item.Transparency = 1
+                item.CanCollide = false
+            elseif item:IsA("Model") then
+                for _, part in ipairs(item:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part.Transparency = 1
+                        part.CanCollide = false
+                    end
+                end
+            end
         end
     end
 
     for _, child in ipairs(map:GetChildren()) do
-        check_and_destroy(child)
+        check_and_hide(child)
     end
-    map.ChildAdded:Connect(check_and_destroy)
+    map.ChildAdded:Connect(check_and_hide)
 end
 
--- | visual lock & character suppression | --
+-- | visual suppression without destroying | --
 local function setup_character_and_effects()
     local blue_color = Color3.fromRGB(0, 85, 190)
     local invisible = NumberSequence.new(1)
@@ -198,7 +199,7 @@ local function setup_character_and_effects()
             or name:find("impact")
     end
 
-    local function is_garou_mesh_name(name)
+    local function is_garou_visual_name(name)
         return name:find("water") or name:find("flow") or name:find("stream") 
             or name:find("whirlwind") or name:find("hunter") or name:find("slash")
             or name:find("fang") or name:find("nado") or name:find("lethal")
@@ -207,7 +208,7 @@ local function setup_character_and_effects()
             or name:find("garou") or name:find("airtrail") or name:find("line") 
             or name:find("shot") or name:find("palm") or name:find("constantemit")
             or name:find("middlespin") or name:find("spiral") or name:find("tornado")
-            or name:find("ring") or name:find("wind")
+            or name:find("ring") or name:find("wind") or name:find("aurora")
     end
 
     local function is_debris_name(name)
@@ -358,7 +359,7 @@ local function setup_character_and_effects()
         end
 
         if item:IsA("Trail") then
-            if not is_blue or is_garou_mesh_name(name) or is_garou_mesh_name(parent_name) then
+            if not is_blue or is_garou_visual_name(name) or is_garou_visual_name(parent_name) then
                 mute_trail(item)
             else
                 item.Color = ColorSequence.new(blue_color)
@@ -369,14 +370,14 @@ local function setup_character_and_effects()
         end
 
         if item:IsA("Beam") then
-            if not is_blue or is_garou_mesh_name(name) or is_garou_mesh_name(parent_name) then
+            if not is_blue or is_garou_visual_name(name) or is_garou_visual_name(parent_name) then
                 mute_beam(item)
             end
             return
         end
 
         if item:IsA("Highlight") then
-            if not is_blue or is_garou_mesh_name(name) or is_garou_mesh_name(parent_name) then
+            if not is_blue or is_garou_visual_name(name) or is_garou_visual_name(parent_name) then
                 pcall(function()
                     item.Enabled = false
                     item.FillTransparency = 1
@@ -394,11 +395,10 @@ local function setup_character_and_effects()
             if is_debris_name(name) or is_smoke_name(name) then
                 lock_part_invisible(item)
                 item.CanCollide = false
-                safe_destroy(item)
                 return
             end
 
-            if not is_blue and is_garou_mesh_name(name) then
+            if not is_blue and is_garou_visual_name(name) then
                 lock_part_invisible(item)
                 return
             end
@@ -416,7 +416,6 @@ local function setup_character_and_effects()
                         part.CanCollide = false
                     end
                 end)
-                safe_destroy(item)
                 return
             end
         end
@@ -479,7 +478,7 @@ local function remove_camera_shake()
     setreadonly(meta, true)
 end
 
--- | debris & thrown cleaner | --
+-- | hybrid debris & thrown cleaner | --
 local function start_debris_cleaner()
     local critical_hitboxes = {
         ["projectile"] = true,
@@ -562,7 +561,6 @@ local function start_debris_cleaner()
         if child:IsA("BasePart") then
             lock_part_invisible(child)
             child.CanCollide = false
-            safe_destroy(child)
         elseif child:IsA("ParticleEmitter") then
             mute_particle(child)
         elseif child:IsA("Model") then
@@ -574,7 +572,6 @@ local function start_debris_cleaner()
                     mute_particle(part)
                 end
             end
-            safe_destroy(child)
         end
     end
 
@@ -599,7 +596,6 @@ local function start_debris_cleaner()
                 monitor_folder(child)
             elseif name:find("vfxdebris") then
                 monitor_folder(child)
-                safe_destroy(child)
             end
         end)
     end
