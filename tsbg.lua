@@ -1,7 +1,7 @@
 -- | Made By m7za | --
 
 -- | configuration | --
-local garou_mode = (getgenv and getgenv().color_garou) or _G.color_garou or color_garou or "transparent"
+local garou_mode = (getgenv and getgenv().garou_effects) or _G.garou_effects or garou_effects or "transparent"
 local is_blue = tostring(garou_mode):lower() == "blue"
 
 -- | services | --
