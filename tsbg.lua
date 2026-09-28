@@ -4,6 +4,18 @@
 local garou_mode = (getgenv and getgenv().garou_effects) or _G.garou_effects or garou_effects or "transparent"
 local is_blue = tostring(garou_mode):lower() == "blue"
 
+-- | cleanup previous connections | --
+if getgenv()._FixLagConnections then
+    for _, conn in ipairs(getgenv()._FixLagConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+end
+getgenv()._FixLagConnections = {}
+local function track_conn(conn)
+    table.insert(getgenv()._FixLagConnections, conn)
+    return conn
+end
+
 -- | services | --
 local players = game:GetService("Players")
 local lighting = game:GetService("Lighting")
@@ -14,7 +26,7 @@ local local_player = players.LocalPlayer
 local terrain = workspace.Terrain
 local player_gui = local_player:WaitForChild("PlayerGui")
 
--- | helper: real character protection | --
+-- | helper: character protection | --
 local function is_real_character(model)
     if not model or not model:IsA("Model") then return false end
     if model == local_player.Character then return true end
@@ -69,8 +81,6 @@ local function setup_lighting()
         Dn = "rbxassetid://115022734343595"
     }
 
-    local is_updating = false
-
     local function apply_sky(sky)
         if not sky or not sky:IsA("Sky") then return end
         for side, id in pairs(sky_textures) do
@@ -86,9 +96,6 @@ local function setup_lighting()
     end
 
     local function update_lighting()
-        if is_updating then return end
-        is_updating = true
-
         lighting.ClockTime = 12
         lighting.GlobalShadows = false
         lighting.Brightness = 0.8
@@ -118,32 +125,27 @@ local function setup_lighting()
             apply_sky(custom_sky)
             custom_sky.Parent = lighting
         end
-
-        is_updating = false
     end
 
     update_lighting()
 
-    lighting.Changed:Connect(function(prop)
-        if prop == "ClockTime" or prop == "OutdoorAmbient" or prop == "Ambient" or prop == "FogEnd" then
-            update_lighting()
-        end
-    end)
+    track_conn(lighting.Changed:Connect(function()
+        update_lighting()
+    end))
 
-    lighting.ChildAdded:Connect(function(child)
+    track_conn(lighting.ChildAdded:Connect(function(child)
         task.defer(function()
             if child:IsA("Sky") then
                 apply_sky(child)
-            else
-                update_lighting()
             end
+            update_lighting()
         end)
-    end)
+    end))
 
-    local_player.CharacterAdded:Connect(function()
-        task.wait(0.5)
+    track_conn(local_player.CharacterAdded:Connect(function()
+        task.wait(0.2)
         update_lighting()
-    end)
+    end))
 end
 
 -- | clouds removal | --
@@ -152,40 +154,40 @@ local function remove_clouds()
     for _, item in ipairs(terrain:GetChildren()) do
         if item:IsA("Clouds") then item.Enabled = false end
     end
-    terrain.ChildAdded:Connect(function(item)
+    track_conn(terrain.ChildAdded:Connect(function(item)
         if item:IsA("Clouds") then item.Enabled = false end
-    end)
+    end))
 end
 
 -- | tree & 3d removal | --
 local function remove_trees()
-    local map = workspace:WaitForChild("Map", 5) or workspace:FindFirstChild("Map")
-    if not map then return end
-
-    local function check_and_hide(item)
+    local function check_and_destroy(item)
+        if not item or not item.Parent then return end
         local name = item.Name:lower()
         if name:find("tree") or name == "3d" then
-            if item:IsA("BasePart") then
-                item.Transparency = 1
-                item.CanCollide = false
-            elseif item:IsA("Model") then
-                for _, part in ipairs(item:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.Transparency = 1
-                        part.CanCollide = false
-                    end
-                end
-            end
+            pcall(function()
+                item:Destroy()
+            end)
         end
     end
 
-    for _, child in ipairs(map:GetChildren()) do
-        check_and_hide(child)
+    local map = workspace:WaitForChild("Map", 5) or workspace:FindFirstChild("Map")
+    if map then
+        for _, child in ipairs(map:GetDescendants()) do
+            check_and_destroy(child)
+        end
+        track_conn(map.DescendantAdded:Connect(check_and_destroy))
     end
-    map.ChildAdded:Connect(check_and_hide)
+
+    for _, child in ipairs(workspace:GetChildren()) do
+        local name = child.Name:lower()
+        if (name:find("tree") or name == "3d") and child.Name ~= "Map" and child.Name ~= "Terrain" then
+            check_and_destroy(child)
+        end
+    end
 end
 
--- | visual suppression without destroying | --
+-- | visual lock & suppression | --
 local function setup_character_and_effects()
     local blue_color = Color3.fromRGB(0, 85, 190)
     local invisible = NumberSequence.new(1)
@@ -208,7 +210,7 @@ local function setup_character_and_effects()
             or name:find("garou") or name:find("airtrail") or name:find("line") 
             or name:find("shot") or name:find("palm") or name:find("constantemit")
             or name:find("middlespin") or name:find("spiral") or name:find("tornado")
-            or name:find("ring") or name:find("wind") or name:find("aurora")
+            or name:find("ring") or name:find("wind")
     end
 
     local function is_debris_name(name)
@@ -222,6 +224,7 @@ local function setup_character_and_effects()
         if not part:IsA("BasePart") or is_character_part(part) then return end
         pcall(function()
             part.Transparency = 1
+            part.CanCollide = false
             part.CastShadow = false
         end)
 
@@ -231,17 +234,17 @@ local function setup_character_and_effects()
             end
         end
 
-        part.ChildAdded:Connect(function(sub)
+        track_conn(part.ChildAdded:Connect(function(sub)
             if sub:IsA("Decal") or sub:IsA("Texture") then
                 sub.Transparency = 1
             end
-        end)
+        end))
 
-        part:GetPropertyChangedSignal("Transparency"):Connect(function()
+        track_conn(part:GetPropertyChangedSignal("Transparency"):Connect(function()
             if not is_character_part(part) and part.Transparency < 1 then
                 part.Transparency = 1
             end
-        end)
+        end))
     end
 
     local function mute_particle(item)
@@ -257,12 +260,12 @@ local function setup_character_and_effects()
             end)
         end
         silence()
-        item:GetPropertyChangedSignal("Enabled"):Connect(function()
+        track_conn(item:GetPropertyChangedSignal("Enabled"):Connect(function()
             if item.Enabled then silence() end
-        end)
-        item:GetPropertyChangedSignal("Texture"):Connect(function()
+        end))
+        track_conn(item:GetPropertyChangedSignal("Texture"):Connect(function()
             if item.Texture ~= "" then silence() end
-        end)
+        end))
     end
 
     local function mute_trail(item)
@@ -275,9 +278,9 @@ local function setup_character_and_effects()
             end)
         end
         silence()
-        item:GetPropertyChangedSignal("Enabled"):Connect(function()
+        track_conn(item:GetPropertyChangedSignal("Enabled"):Connect(function()
             if item.Enabled then silence() end
-        end)
+        end))
     end
 
     local function mute_beam(item)
@@ -290,9 +293,9 @@ local function setup_character_and_effects()
             end)
         end
         silence()
-        item:GetPropertyChangedSignal("Enabled"):Connect(function()
+        track_conn(item:GetPropertyChangedSignal("Enabled"):Connect(function()
             if item.Enabled then silence() end
-        end)
+        end))
     end
 
     local function hide_entire_clone(model)
@@ -311,7 +314,7 @@ local function setup_character_and_effects()
             end
         end
 
-        model.DescendantAdded:Connect(function(part)
+        track_conn(model.DescendantAdded:Connect(function(part)
             if part:IsA("BasePart") then
                 lock_part_invisible(part)
                 part.CanCollide = false
@@ -324,7 +327,7 @@ local function setup_character_and_effects()
             elseif part:IsA("Highlight") then
                 pcall(function() part.Enabled = false end)
             end
-        end)
+        end))
     end
 
     local function handle_descendant(item)
@@ -394,7 +397,6 @@ local function setup_character_and_effects()
         if item:IsA("BasePart") then
             if is_debris_name(name) or is_smoke_name(name) then
                 lock_part_invisible(item)
-                item.CanCollide = false
                 return
             end
 
@@ -407,15 +409,13 @@ local function setup_character_and_effects()
                 for _, part in ipairs(item:GetDescendants()) do
                     if part:IsA("BasePart") then
                         lock_part_invisible(part)
-                        part.CanCollide = false
                     end
                 end
-                item.DescendantAdded:Connect(function(part)
+                track_conn(item.DescendantAdded:Connect(function(part)
                     if part:IsA("BasePart") then
                         lock_part_invisible(part)
-                        part.CanCollide = false
                     end
-                end)
+                end))
                 return
             end
         end
@@ -424,9 +424,9 @@ local function setup_character_and_effects()
     for _, desc in ipairs(workspace:GetDescendants()) do
         task.spawn(handle_descendant, desc)
     end
-    workspace.DescendantAdded:Connect(function(desc)
+    track_conn(workspace.DescendantAdded:Connect(function(desc)
         task.defer(handle_descendant, desc)
-    end)
+    end))
 end
 
 -- | fps & ping counter | --
@@ -452,7 +452,7 @@ local function create_fps_counter()
     local current_fps = 60
     local last_tick = os.clock()
 
-    run_service.RenderStepped:Connect(function()
+    track_conn(run_service.RenderStepped:Connect(function()
         local now = os.clock()
         local frame_fps = 1 / math.max(now - last_tick, 0.0001)
         last_tick = now
@@ -461,7 +461,7 @@ local function create_fps_counter()
         local ping = (local_player:GetNetworkPing() or 0) * 1000
         label.Text = string.format("FPS: %d | PING: %d ms", math.floor(current_fps), math.floor(ping))
         label.TextColor3 = Color3.fromHSV((now * 0.4) % 1, 0.8, 1)
-    end)
+    end))
 end
 
 -- | camera shake removal | --
@@ -478,7 +478,7 @@ local function remove_camera_shake()
     setreadonly(meta, true)
 end
 
--- | hybrid debris & thrown cleaner | --
+-- | debris & thrown  | --
 local function start_debris_cleaner()
     local critical_hitboxes = {
         ["projectile"] = true,
@@ -508,6 +508,7 @@ local function start_debris_cleaner()
         if not part:IsA("BasePart") or is_character_part(part) then return end
         pcall(function()
             part.Transparency = 1
+            part.CanCollide = false
             part.CastShadow = false
         end)
 
@@ -517,17 +518,17 @@ local function start_debris_cleaner()
             end
         end
 
-        part.ChildAdded:Connect(function(sub)
+        track_conn(part.ChildAdded:Connect(function(sub)
             if sub:IsA("Decal") or sub:IsA("Texture") then
                 sub.Transparency = 1
             end
-        end)
+        end))
 
-        part:GetPropertyChangedSignal("Transparency"):Connect(function()
+        track_conn(part:GetPropertyChangedSignal("Transparency"):Connect(function()
             if not is_character_part(part) and part.Transparency < 1 then
                 part.Transparency = 1
             end
-        end)
+        end))
     end
 
     local function mute_particle(item)
@@ -543,12 +544,12 @@ local function start_debris_cleaner()
             end)
         end
         silence()
-        item:GetPropertyChangedSignal("Enabled"):Connect(function()
+        track_conn(item:GetPropertyChangedSignal("Enabled"):Connect(function()
             if item.Enabled then silence() end
-        end)
-        item:GetPropertyChangedSignal("Texture"):Connect(function()
+        end))
+        track_conn(item:GetPropertyChangedSignal("Texture"):Connect(function()
             if item.Texture ~= "" then silence() end
-        end)
+        end))
     end
 
     local function handle_thrown_element(child)
@@ -560,14 +561,12 @@ local function start_debris_cleaner()
 
         if child:IsA("BasePart") then
             lock_part_invisible(child)
-            child.CanCollide = false
         elseif child:IsA("ParticleEmitter") then
             mute_particle(child)
         elseif child:IsA("Model") then
             for _, part in ipairs(child:GetDescendants()) do
                 if part:IsA("BasePart") then
                     lock_part_invisible(part)
-                    part.CanCollide = false
                 elseif part:IsA("ParticleEmitter") then
                     mute_particle(part)
                 end
@@ -579,9 +578,9 @@ local function start_debris_cleaner()
         for _, desc in ipairs(folder:GetDescendants()) do
             handle_thrown_element(desc)
         end
-        folder.DescendantAdded:Connect(function(desc)
+        track_conn(folder.DescendantAdded:Connect(function(desc)
             task.defer(handle_thrown_element, desc)
-        end)
+        end))
     end
 
     local thrown = workspace:WaitForChild("Thrown", 3) or workspace:FindFirstChild("Thrown")
@@ -606,7 +605,7 @@ local function start_debris_cleaner()
         end
     end
 
-    workspace.ChildAdded:Connect(inspect_element)
+    track_conn(workspace.ChildAdded:Connect(inspect_element))
 end
 
 -- | fps unlocker | --
