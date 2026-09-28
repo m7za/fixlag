@@ -1,5 +1,6 @@
 -- | Made By m7za | --
 
+
 -- config
 local garou_mode = (getgenv and getgenv().garou_effects) or _G.garou_effects or garou_effects or "transparent"
 local is_blue = tostring(garou_mode):lower() == "blue"
@@ -81,33 +82,50 @@ local function setup_lighting()
         Dn = 115022734343595
     }
 
-    local function kill_sun(sky)
-        if sky then
-            sky.SunAngularSize = 0
-            sky.SunTextureId = ""
-            sky.MoonAngularSize = 0
-            sky.MoonTextureId = ""
+    local function apply_sky_props(sky)
+        if not sky or not sky:IsA("Sky") then return end
+        for k, id in pairs(SkyIDs) do
+            local prop = "Skybox" .. k
+            local val = "rbxassetid://" .. id
+            if sky[prop] ~= val then
+                sky[prop] = val
+            end
         end
+        sky.SunAngularSize = 0
+        sky.SunTextureId = ""
+        sky.MoonAngularSize = 0
+        sky.MoonTextureId = ""
+    end
+
+    local function clean_atmosphere(at)
+        if not at or not at:IsA("Atmosphere") then return end
+        at.Density = 0
+        at.Haze = 0
+        at.Glare = 0
+        track_conn(at:GetPropertyChangedSignal("Density"):Connect(function()
+            if at.Density > 0 then at.Density = 0 end
+        end))
+        track_conn(at:GetPropertyChangedSignal("Haze"):Connect(function()
+            if at.Haze > 0 then at.Haze = 0 end
+        end))
     end
 
     local function apply_sky()
+        local found = false
         for _, v in ipairs(lighting:GetChildren()) do
-            if v:IsA("Sky") and v.Name ~= "CustomSky" then
-                v:Destroy()
+            if v:IsA("Sky") then
+                apply_sky_props(v)
+                found = true
+            elseif v:IsA("Atmosphere") then
+                clean_atmosphere(v)
             end
         end
 
-        local existing = lighting:FindFirstChild("CustomSky")
-        if not existing then
+        if not found then
             local s = Instance.new("Sky")
             s.Name = "CustomSky"
-            for k, id in pairs(SkyIDs) do
-                s["Skybox" .. k] = "rbxassetid://" .. id
-            end
-            kill_sun(s)
+            apply_sky_props(s)
             s.Parent = lighting
-        else
-            kill_sun(existing)
         end
     end
 
@@ -122,9 +140,7 @@ local function setup_lighting()
             if v:IsA("PostEffect") or v:IsA("SunRaysEffect") then
                 v.Enabled = false
             elseif v:IsA("Atmosphere") then
-                v.Density = 0
-                v.Haze = 0
-                v.Glare = 0
+                clean_atmosphere(v)
             end
         end
     end
@@ -133,19 +149,25 @@ local function setup_lighting()
     clean_lighting()
 
     track_conn(lighting.ChildAdded:Connect(function(v)
-        if v:IsA("Sky") and v.Name ~= "CustomSky" then
-            task.wait()
-            v:Destroy()
-            apply_sky()
-        elseif v:IsA("Atmosphere") then
-            v.Density = 0
-            v.Haze = 0
-            v.Glare = 0
+        task.defer(function()
+            if v:IsA("Sky") then
+                apply_sky_props(v)
+            elseif v:IsA("Atmosphere") then
+                clean_atmosphere(v)
+            elseif v:IsA("PostEffect") or v:IsA("SunRaysEffect") then
+                v.Enabled = false
+            end
+        end)
+    end))
+
+    track_conn(lighting.Changed:Connect(function(prop)
+        if prop == "ClockTime" or prop == "FogEnd" or prop == "Brightness" then
+            clean_lighting()
         end
     end))
 
     track_conn(local_player.CharacterAdded:Connect(function()
-        task.wait(0.2)
+        task.wait(0.1)
         apply_sky()
         clean_lighting()
     end))
@@ -164,28 +186,28 @@ end
 
 -- trees
 local function remove_trees()
-    local function check_and_destroy(item)
+    local function check_tree(item)
         if not item or not item.Parent then return end
         local name = item.Name:lower()
-        if name:find("tree") or name == "3d" then
+        if name:find("tree") or name == "3d" or name:find("foliage") or name:find("leaf") or name:find("bush") then
             pcall(function()
                 item:Destroy()
             end)
         end
     end
 
-    local map = workspace:WaitForChild("Map", 5) or workspace:FindFirstChild("Map")
+    local map = workspace:FindFirstChild("Map") or workspace:WaitForChild("Map", 5)
     if map then
         for _, child in ipairs(map:GetDescendants()) do
-            check_and_destroy(child)
+            check_tree(child)
         end
-        track_conn(map.DescendantAdded:Connect(check_and_destroy))
+        track_conn(map.DescendantAdded:Connect(check_tree))
     end
 
     for _, child in ipairs(workspace:GetChildren()) do
         local name = child.Name:lower()
-        if (name:find("tree") or name == "3d") and child.Name ~= "Map" and child.Name ~= "Terrain" then
-            check_and_destroy(child)
+        if (name:find("tree") or name == "3d") and child ~= map and child ~= terrain then
+            check_tree(child)
         end
     end
 end
@@ -481,7 +503,7 @@ local function remove_camera_shake()
     setreadonly(meta, true)
 end
 
--- debris
+-- debris cleaner
 local function start_debris_cleaner()
     local critical_hitboxes = {
         ["projectile"] = true,
