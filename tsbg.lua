@@ -29,9 +29,7 @@ local function setup_lighting()
         if not sky:IsA("Sky") then return end
         for side, id in pairs(sky_textures) do
             local prop = "Skybox" .. side
-            if sky[prop] ~= id then
-                sky[prop] = id
-            end
+            if sky[prop] ~= id then sky[prop] = id end
         end
         sky.SunAngularSize = 0
         sky.SunTextureId = ""
@@ -78,7 +76,7 @@ local function setup_lighting()
     end)
 end
 
--- | clouds removal | --
+-- | clouds & trees removal | --
 local function remove_clouds()
     if not terrain then return end
     for _, item in ipairs(terrain:GetChildren()) do
@@ -89,7 +87,6 @@ local function remove_clouds()
     end)
 end
 
--- | tree & 3d removal | --
 local function remove_trees()
     local map = workspace:WaitForChild("Map", 5) or workspace:FindFirstChild("Map")
     if not map then return end
@@ -101,34 +98,30 @@ local function remove_trees()
         end
     end
 
-    for _, child in ipairs(map:GetChildren()) do
-        check_and_destroy(child)
-    end
+    for _, child in ipairs(map:GetChildren()) do check_and_destroy(child) end
     map.ChildAdded:Connect(check_and_destroy)
 end
 
--- | detectors for smoke & garou specific skills | --
+-- | filters for smoke, lethal whirlwind beam & flowing water | --
 local function is_smoke(name)
     return name:find("smoke") or name:find("dust") or name:find("dirt") 
         or name:find("puff") or name:find("cloud") or name:find("ground") 
-        or name:find("smokering") or name:find("nadosmoke")
+        or name:find("smokering") or name:find("nadosmoke") or name:find("debris")
 end
 
--- Фильтр для Flowing Water и Lethal Whirlwind Stream
-local function is_target_garou_effect(name)
-    -- Flowing Water
-    local is_flowing_water = name:find("water") or name:find("flow") 
-        or name:find("rocksmash") or name:find("waterpunch") or name:find("waterslash")
-
-    -- Lethal Whirlwind Stream
-    local is_whirlwind_stream = name:find("lethal") or name:find("whirlwind") 
-        or name:find("middlespin") or name:find("tornadomain") or name:find("tornado")
-        or name:find("spiral") or name:find("nado") or name:find("wind")
-
-    -- Общие эффекты скиллов Гароу
-    local is_general_stream = name:find("stream") or name:find("fang") or name:find("afterimage")
-
-    return is_flowing_water or is_whirlwind_stream or is_general_stream
+local function is_garou_vfx(name)
+    -- Flowing Water (Скилл 1)
+    local is_fw = name:find("water") or name:find("flow") or name:find("stream")
+        or name:find("rocksmash") or name:find("fang") or name:find("slash")
+        or name:find("fist") or name:find("flowing")
+    
+    -- Lethal Whirlwind Stream (Скилл 2 + столб света в небо)
+    local is_lws = name:find("whirlwind") or name:find("lethal") or name:find("middlespin")
+        or name:find("tornadomain") or name:find("tornado") or name:find("nado")
+        or name:find("spiral") or name:find("wind") or name:find("pillar")
+        or name:find("up") or name:find("up2") or name:find("beam") or name:find("cylinder")
+        
+    return is_fw or is_lws
 end
 
 local function purge_visual(item)
@@ -136,6 +129,8 @@ local function purge_visual(item)
     pcall(function()
         if item:IsA("ParticleEmitter") then
             item.Enabled = false
+            item.Rate = 0
+            item.Transparency = NumberSequence.new(1)
             item:Clear()
         elseif item:IsA("Trail") or item:IsA("Beam") or item:IsA("Highlight") or item:IsA("Smoke") or item:IsA("Fire") or item:IsA("Light") then
             item.Enabled = false
@@ -147,197 +142,112 @@ local function purge_visual(item)
     end)
 end
 
--- | character effects & smoke removal | --
-local function setup_character_and_effects()
-    local function process_character_child(desc)
-        if not desc then return end
-        local name = desc.Name:lower()
-
-        if desc:IsA("Smoke") or is_smoke(name) then
-            purge_visual(desc)
-            return
-        end
-
-        if is_target_garou_effect(name) then
-            purge_visual(desc)
-            return
-        end
-
-        -- Удаление остаточных трейлов и эмиттеров при активации комбо
-        if desc:IsA("ParticleEmitter") or desc:IsA("Trail") or desc:IsA("Beam") then
-            if is_smoke(name) or is_target_garou_effect(name) then
-                purge_visual(desc)
+-- Проверка на огромный неоновый столб (Lethal Whirlwind Stream)
+local function is_vertical_beam(part)
+    if part:IsA("BasePart") then
+        local size = part.Size
+        -- Если деталь вытянута вертикально более чем на 15 studs или имеет неоновый голубой свет
+        if size.Y > 15 or size.Z > 15 or size.X > 15 then
+            if part.Material == Enum.Material.Neon or part.Material == Enum.Material.ForceField then
+                return true
             end
         end
     end
+    return false
+end
 
-    local function hook_character(char)
-        if not char then return end
-        for _, desc in ipairs(char:GetDescendants()) do
-            process_character_child(desc)
-        end
-        char.DescendantAdded:Connect(process_character_child)
-    end
-
-    -- Хукаем локального игрока и всех остальных персонажей
-    for _, player in ipairs(players:GetPlayers()) do
-        if player.Character then hook_character(player.Character) end
-        player.CharacterAdded:Connect(hook_character)
-    end
-    players.PlayerAdded:Connect(function(player)
-        player.CharacterAdded:Connect(hook_character)
-    end)
-
-    -- Обработка объектов в Workspace
-    local function handle_world_object(item)
+-- | live entities (players + dummies) handler | --
+local function setup_entities_and_world()
+    local function process_descendant(item)
         if not item then return end
         local name = item.Name:lower()
 
-        -- Проверка на дым
+        -- Фото 3: Удаление любого смока
         if item:IsA("Smoke") or is_smoke(name) then
             purge_visual(item)
             return
         end
 
-        -- Проверка на эффекты скиллов
-        if is_target_garou_effect(name) then
-            if item:IsA("BasePart") then
-                item.Transparency = 1
-                item.CanCollide = false
-            elseif item:IsA("Model") then
-                for _, sub in ipairs(item:GetDescendants()) do
-                    if sub:IsA("BasePart") then
-                        sub.Transparency = 1
-                        sub.CanCollide = false
-                    elseif sub:IsA("ParticleEmitter") then
-                        sub.Enabled = false
-                        sub:Clear()
-                    end
-                end
+        -- Фото 1 и Фото 2: Удаление скиллов и эффектов ударов
+        if is_garou_vfx(name) or is_vertical_beam(item) then
+            purge_visual(item)
+            return
+        end
+
+        -- Трейлы и эмиттеры на конечностях персонажа/манекена
+        if item:IsA("ParticleEmitter") or item:IsA("Trail") or item:IsA("Beam") then
+            local p_name = item.Parent and item.Parent.Name:lower() or ""
+            if is_garou_vfx(p_name) or is_smoke(p_name) then
+                purge_visual(item)
             end
-            purge_visual(item)
-            return
-        end
-
-        -- Проверка на фантомы/клоны от скиллов
-        local is_clone = name:find("clone") or name:find("afterimage") or name:find("ghost")
-        if is_clone and not name:find("dummy") then
-            purge_visual(item)
-            return
         end
     end
 
-    for _, child in ipairs(workspace:GetChildren()) do
-        handle_world_object(child)
+    local function hook_entity(model)
+        if not model or not model:IsA("Model") then return end
+        for _, desc in ipairs(model:GetDescendants()) do
+            process_descendant(desc)
+        end
+        model.DescendantAdded:Connect(process_descendant)
     end
-    workspace.ChildAdded:Connect(function(child)
-        task.defer(handle_world_object, child)
+
+    -- Обработка всех манекенов (Weakest Dummy) и персонажей
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") then
+            hook_entity(obj)
+        else
+            process_descendant(obj)
+        end
+    end
+
+    workspace.DescendantAdded:Connect(function(item)
+        task.defer(function()
+            if item:IsA("Model") and item:FindFirstChildOfClass("Humanoid") then
+                hook_entity(item)
+            else
+                process_descendant(item)
+            end
+        end)
     end)
 end
 
--- | debris & thrown cleaner | --
+-- | debris & thrown folder cleaner | --
 local function start_debris_cleaner()
-    -- Белый список: убрали middlespin, nadosmoke, tornadomain, spiral
-    local whitelist = {
+    local safe_whitelist = {
         ["debris2g"] = true,
         ["projectile"] = true,
         ["flash"] = true,
         ["shurikenproj"] = true,
-        ["tparticles2"] = true,
         ["proj"] = true,
-        ["adjusted"] = true,
-        ["general"] = true,
-        ["up"] = true,
-        ["up2"] = true,
-        ["go2"] = true,
-        ["dotted"] = true,
         ["dragon"] = true,
-        ["kingcrab"] = true,
-        ["model"] = true,
-        ["preload"] = true
+        ["kingcrab"] = true
     }
 
-    local function is_whitelisted(obj)
-        if not obj then return true end
+    local function inspect_thrown(obj)
+        if not obj or not obj.Parent then return end
         local name = obj.Name:lower()
 
-        -- Смок и эффекты целевых скиллов удаляются ВСЕГДА, даже если совпали с белым списком
-        if is_smoke(name) or is_target_garou_effect(name) then 
-            return false 
-        end
-
-        if whitelist[name] then return true end
-        if obj:FindFirstChildOfClass("Humanoid") then return true end
-        if obj.Parent and obj.Parent:FindFirstChildOfClass("Humanoid") then return true end
-
-        return false
-    end
-
-    local function delete_debris(obj)
-        if not obj or not obj.Parent or is_whitelisted(obj) then return end
-
-        if obj:IsA("BasePart") then
-            obj.Transparency = 1
-            obj.CanCollide = false
-        elseif obj:IsA("Model") then
-            for _, part in ipairs(obj:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    part.Transparency = 1
-                    part.CanCollide = false
-                elseif part:IsA("ParticleEmitter") then
-                    part.Enabled = false
-                    part:Clear()
-                end
-            end
-        end
-        pcall(function() obj:Destroy() end)
-    end
-
-    local function handle_thrown_child(child)
-        if not child or not child.Parent then return end
-        if is_whitelisted(child) then
-            if child:IsA("Model") then
-                for _, c in ipairs(child:GetChildren()) do
-                    if not is_whitelisted(c) then delete_debris(c) end
-                end
-            end
+        -- Никаких исключений для скиллов Гароу и дыма
+        if is_smoke(name) or is_garou_vfx(name) or is_vertical_beam(obj) then
+            purge_visual(obj)
             return
         end
-        delete_debris(child)
+
+        if safe_whitelist[name] then return end
+        if obj:FindFirstChildOfClass("Humanoid") then return end
+
+        if obj:IsA("BasePart") or obj:IsA("Model") then
+            purge_visual(obj)
+        end
     end
 
     local thrown = workspace:WaitForChild("Thrown", 3) or workspace:FindFirstChild("Thrown")
     if thrown then
-        for _, child in ipairs(thrown:GetChildren()) do
-            handle_thrown_child(child)
-        end
+        for _, child in ipairs(thrown:GetChildren()) do inspect_thrown(child) end
         thrown.ChildAdded:Connect(function(child)
-            task.defer(handle_thrown_child, child)
+            task.defer(inspect_thrown, child)
         end)
     end
-
-    local function inspect_element(child)
-        task.defer(function()
-            if not child or not child.Parent then return end
-            local name = child.Name:lower()
-
-            if name == "thrown" then
-                child.ChildAdded:Connect(function(c) task.defer(handle_thrown_child, c) end)
-            elseif name:find("vfxdebris") then
-                child:ClearAllChildren()
-                child.ChildAdded:Connect(function(v) task.defer(delete_debris, v) end)
-            elseif is_smoke(name) or is_target_garou_effect(name) then
-                delete_debris(child)
-            end
-        end)
-    end
-
-    for _, child in ipairs(workspace:GetChildren()) do
-        if child.Name:lower() ~= "thrown" then
-            inspect_element(child)
-        end
-    end
-    workspace.ChildAdded:Connect(inspect_element)
 end
 
 -- | fps & ping counter | --
@@ -400,7 +310,7 @@ local modules = {
     setup_lighting,
     remove_clouds,
     remove_trees,
-    setup_character_and_effects,
+    setup_entities_and_world,
     create_fps_counter,
     remove_camera_shake,
     start_debris_cleaner,
@@ -411,7 +321,6 @@ for _, run_module in ipairs(modules) do
     task.spawn(pcall, run_module)
 end
 
--- | engine settings | --
 pcall(function()
     settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 
 end)
