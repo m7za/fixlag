@@ -95,30 +95,20 @@ local function remove_trees()
     local map = workspace:WaitForChild("Map", 5) or workspace:FindFirstChild("Map")
     if not map then return end
 
-    local function check_and_hide(item)
+    local function check_and_destroy(item)
         local name = item.Name:lower()
         if name:find("tree") or name == "3d" then
-            if item:IsA("BasePart") then
-                item.Transparency = 1
-                item.CanCollide = false
-            elseif item:IsA("Model") then
-                for _, part in ipairs(item:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.Transparency = 1
-                        part.CanCollide = false
-                    end
-                end
-            end
+            item:Destroy()
         end
     end
 
     for _, child in ipairs(map:GetChildren()) do
-        check_and_hide(child)
+        check_and_destroy(child)
     end
-    map.ChildAdded:Connect(check_and_hide)
+    map.ChildAdded:Connect(check_and_destroy)
 end
 
--- | filters | --
+-- | filter helpers | --
 local function is_smoke_name(str)
     return str:find("smoke") or str:find("dust") or str:find("dirt") 
         or str:find("puff") or str:find("smokering") or str:find("nadosmoke")
@@ -129,33 +119,43 @@ local function is_garou_name(str)
     return str:find("water") or str:find("flow") or str:find("stream") 
         or str:find("whirlwind") or str:find("hunter") or str:find("slash")
         or str:find("fang") or str:find("nado") or str:find("lethal")
-        or str:find("rocksmash") or str:find("aura") or str:find("middlespin")
-        or str:find("spiral") or str:find("tornadomain")
+        or str:find("rocksmash") or str:find("aura") or str:find("rampage")
+        or str:find("middlespin") or str:find("spiral") or str:find("tornadomain")
+        or str:find("slash_teleport")
 end
 
--- | safe visual silencer (не ломает логику игры и UI) | --
-local function silence_visual(item)
+local function is_debris_name(str)
+    return str:find("debris") or str:find("starterdeb") or str:find("vfxdebris") or str:find("crater")
+end
+
+local function is_clone_model(item, name)
+    return name:find("clone") or name:find("afterimage") or name:find("ghost") or name:find("flowing")
+        or (item:IsA("Model") and item:FindFirstChild("Head") and not players:GetPlayerFromCharacter(item) and not name:find("dummy"))
+end
+
+local function purge_visual(item)
+    pcall(function()
+        if item:IsA("ParticleEmitter") then
+            item.Enabled = false
+            item:Clear()
+        elseif item:IsA("Trail") or item:IsA("Beam") or item:IsA("Highlight") or item:IsA("Smoke") or item:IsA("Fire") or item:IsA("Light") then
+            item.Enabled = false
+        end
+    end)
+    item:Destroy()
+end
+
+-- | object handler | --
+local function process_object(item)
     if not item or not item.Parent then return end
 
-    -- Защита интерфейса и персонажей
-    if item:IsDescendantOf(player_gui) or item:IsA("GuiObject") or item:IsA("Humanoid") then
-        return
-    end
-
     local name = item.Name:lower()
-    local parent_name = item.Parent.Name:lower()
+    local parent_name = item.Parent and item.Parent.Name:lower() or ""
     local full_context = name .. " " .. parent_name
 
-    -- 1. Смок и пыль (глушим без удаления, чтобы скрипты игры не крашились)
-    if item:IsA("Smoke") then
-        item.Enabled = false
-        item.Opacity = 0
-        return
-    elseif item:IsA("ParticleEmitter") and is_smoke_name(full_context) then
-        item.Enabled = false
-        item.Rate = 0
-        item.Transparency = NumberSequence.new(1)
-        item:Clear()
+    -- 1. Смок и пыль удаляются ВСЕГДА (даже в режиме blue)
+    if item:IsA("Smoke") or (item:IsA("ParticleEmitter") and is_smoke_name(full_context)) then
+        purge_visual(item)
         return
     end
 
@@ -169,62 +169,111 @@ local function silence_visual(item)
                 item.Color = ColorSequence.new(blue_color)
             end
         else
-            -- Режим transparent: скрываем рендер
-            if item:IsA("ParticleEmitter") then
-                item.Enabled = false
-                item.Rate = 0
-                item.Transparency = NumberSequence.new(1)
-                item:Clear()
-            elseif item:IsA("Trail") or item:IsA("Beam") or item:IsA("Highlight") then
-                item.Enabled = false
-            elseif item:IsA("MeshPart") and not item.Parent:FindFirstChildOfClass("Humanoid") then
+            -- Режим transparent: полное удаление
+            if item:IsA("ParticleEmitter") or item:IsA("Trail") or item:IsA("Beam") or item:IsA("Highlight") then
+                purge_visual(item)
+                return
+            elseif item:IsA("BasePart") then
                 item.Transparency = 1
+                item.CanCollide = false
+                item:Destroy()
+                return
+            elseif item:IsA("Model") then
+                for _, desc in ipairs(item:GetDescendants()) do
+                    if desc:IsA("BasePart") then
+                        desc.Transparency = 1
+                        desc.CanCollide = false
+                    elseif desc:IsA("ParticleEmitter") then
+                        pcall(function() desc.Enabled = false desc:Clear() end)
+                    end
+                end
+                item:Destroy()
+                return
             end
+        end
+    end
+
+    -- 3. Клоны и анимации послеобразов Гароу
+    if not is_blue and is_clone_model(item, name) then
+        if item:IsA("BasePart") then
+            item.Transparency = 1
+            item.CanCollide = false
+            item:Destroy()
+        elseif item:IsA("Model") then
+            for _, desc in ipairs(item:GetDescendants()) do
+                if desc:IsA("BasePart") then
+                    desc.Transparency = 1
+                    desc.CanCollide = false
+                end
+            end
+            item:Destroy()
         end
         return
     end
 
-    -- 3. Осколки от ударов (debris)
-    if (name:find("debris") or name:find("vfxdebris")) and item:IsA("BasePart") then
-        if not item.Parent:FindFirstChildOfClass("Humanoid") then
+    -- 4. Дебрис и летящие камни
+    if is_debris_name(name) then
+        if item:IsA("BasePart") then
             item.Transparency = 1
-            item.CastShadow = false
+            item.CanCollide = false
+            item:Destroy()
+        elseif item:IsA("Model") or item:IsA("Folder") then
+            item:Destroy()
         end
     end
 end
 
--- | character & vfx hooks | --
+-- | character & vfx hook | --
 local function setup_character_and_effects()
-    local function hook_container(folder)
-        if not folder then return end
-        for _, desc in ipairs(folder:GetDescendants()) do
-            silence_visual(desc)
+    local function hook_target(char)
+        if not char then return end
+        for _, desc in ipairs(char:GetDescendants()) do
+            process_object(desc)
         end
-        folder.DescendantAdded:Connect(function(desc)
-            task.defer(silence_visual, desc)
+        char.DescendantAdded:Connect(function(desc)
+            task.defer(process_object, desc)
         end)
     end
 
-    -- Папка живых игроков в TSB
+    -- Все игроки на сервере (включая локального)
     local live_folder = workspace:WaitForChild("Live", 5) or workspace:FindFirstChild("Live")
     if live_folder then
-        hook_container(live_folder)
+        for _, char in ipairs(live_folder:GetChildren()) do
+            hook_target(char)
+        end
+        live_folder.ChildAdded:Connect(hook_target)
     end
 
-    -- Летящие эффекты
+    for _, plr in ipairs(players:GetPlayers()) do
+        if plr.Character then hook_target(plr.Character) end
+        plr.CharacterAdded:Connect(hook_target)
+    end
+    players.PlayerAdded:Connect(function(plr)
+        plr.CharacterAdded:Connect(hook_target)
+    end)
+
+    -- Папка летящих способностей
     local thrown = workspace:WaitForChild("Thrown", 5) or workspace:FindFirstChild("Thrown")
     if thrown then
-        hook_container(thrown)
+        for _, child in ipairs(thrown:GetDescendants()) do
+            process_object(child)
+        end
+        thrown.DescendantAdded:Connect(function(child)
+            task.defer(process_object, child)
+        end)
     end
 
-    -- Объекты, появляющиеся прямо в Workspace
+    -- Корневой Workspace для создаваемых эффектов
     workspace.ChildAdded:Connect(function(child)
         task.defer(function()
             if not child or not child.Parent then return end
-            if child.Name ~= "Live" and child.Name ~= "Thrown" and child.Name ~= "Terrain" and child.Name ~= "Map" then
-                silence_visual(child)
-                hook_container(child)
+            process_object(child)
+            for _, desc in ipairs(child:GetDescendants()) do
+                process_object(desc)
             end
+            child.DescendantAdded:Connect(function(desc)
+                task.defer(process_object, desc)
+            end)
         end)
     end)
 end
@@ -264,6 +313,20 @@ local function create_fps_counter()
     end)
 end
 
+-- | camera shake removal | --
+local function remove_camera_shake()
+    if not (getrawmetatable and setreadonly) then return end
+    local meta = getrawmetatable(game)
+    local old_index = meta.__index
+    setreadonly(meta, false)
+    meta.__index = newcclosure(function(obj, key)
+        if key == "CamShakeCF" and obj == _G then return CFrame.new() end
+        if key == "CameraOffset" and obj:IsA("Humanoid") then return Vector3.zero end
+        return old_index(obj, key)
+    end)
+    setreadonly(meta, true)
+end
+
 -- | fps unlocker | --
 local function unlock_fps()
     local uncap = setfpscap or set_fps_cap
@@ -277,6 +340,7 @@ local modules = {
     remove_trees,
     setup_character_and_effects,
     create_fps_counter,
+    remove_camera_shake,
     unlock_fps
 }
 
